@@ -1,4 +1,4 @@
-# Logz.io Query Automation Pipeline
+# Logz.io Metrics Reporter
 
 ## Overview
 This repository contains:
@@ -41,10 +41,10 @@ The pipeline generates `output.csv` containing processed log data, attached as a
 ## Repository Structure
 ```plaintext
 .
-├── Jenkinsfile         # Jenkins pipeline definition
-├── script.py           # Python script for querying logs
-├── requirements.txt    # Python dependencies
-├── README.md           # Repository documentation (this file)
+├── Jenkinsfile               # Jenkins pipeline definition
+├── logz_metrics_handler.py   # Python script for querying logs
+├── requirements.txt          # Python dependencies
+├── README.md                 # Repository documentation (this file)
 ```
 
 ---
@@ -53,7 +53,7 @@ The pipeline generates `output.csv` containing processed log data, attached as a
 
 ### 1. Clone the Repository
 ```bash
-git clone git@git.cias.one:tid/log-query-automation.git
+git clone git@git.cias.one:tid/logzio-metrics-reporter.git
 cd log-query-automation
 ```
 
@@ -86,10 +86,11 @@ git pull origin main
 ### Run the Script Locally
 Execute the script with required arguments:
 ```bash
-python script.py \
+python logz_metrics_handler.py \
     --date 2025-01-26 \
     --start_time 08:00:00Z \
     --end_time 10:00:00Z \
+    --time_range 14 \
     --eu_token "<EU_TOKEN>" \
     --na_token "<NA_TOKEN>" \
     --customers_file "customers.yaml"
@@ -102,13 +103,14 @@ python script.py \
      - **DATE**: Base date in the format `YYYY-MM-DD`.
      - **START_TIME**: Start time in the format `HH:mm:ssZ` (UTC).
      - **END_TIME**: End time in the format `HH:mm:ssZ` (UTC).
+     - **TIME_RANGE**: Number of days before and after the base date.
 
 2. **Pipeline Overview**:
    - The `Jenkinsfile` performs the following stages:
-     - **Checkout Current Repository**: Fetches `script.py`.
+     - **Checkout Current Repository**: Fetches `logz_metrics_handler.py`.
      - **Checkout oas-deployment**: Uses sparse checkout to fetch `customers.yaml`.
      - **Setup Python Environment**: Creates and activates a virtual environment.
-     - **Run Script**: Executes the script with user-specified parameters.
+     - **Run logz_metrics_handler.py**: Executes the script with user-specified parameters.
      - **Archive Results**: Saves `output.csv` as a Jenkins build artifact.
 
 3. **Download Artifacts**:

@@ -7,8 +7,10 @@ from typing import List, Tuple, Dict, Any
 import requests
 import yaml
 from tabulate import tabulate
+from atlassian import Confluence  # Used for the Confluence Integration
 
 
+# Utility Functions
 def get_headers(token: str) -> Dict[str, str]:
     """
     Generate HTTP headers for the API request.
@@ -39,6 +41,7 @@ def get_url(environment: str) -> str:
     return "https://api.logz.io/v1/search" if environment == 'na01-prd' else "https://api-eu.logz.io/v1/search"
 
 
+# Core Functions
 def log_results_and_export_to_csv(
         results: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]],
         date_ranges: List[Tuple[str, str, str]],
@@ -253,6 +256,104 @@ def process_date_task(
     return date, date_results
 
 
+def create_confluence_page(confluence_url: str, username: str, api_token: str, space_key: str, page_title: str,
+                           findings: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]]) -> None:
+    """
+    Creates a Confluence page with detailed findings and metrics,
+    displaying environments side by side for the given dates.
+
+    Args:
+        confluence_url: The base URL of the Confluence server where the page
+            should be created.
+        username: The username required to authenticate against the Confluence
+            server.
+        api_token: The API token or password for authenticating the user.
+        space_key: The Confluence space key where the page will be created.
+        page_title: The title of the new Confluence page.
+        findings: A dictionary mapping dates to a hierarchy of environments and
+            their customer metrics. Each metric includes the customer name,
+            total requests, failed requests, and a computed failure percentage.
+    """
+    confluence = Confluence(
+        url=confluence_url,
+        username=username,
+        password=api_token
+    )
+
+    content = f"<h1>{page_title}</h1>"
+
+    for date, environments in findings.items():
+        # Start date section
+        content += f"<h2>Results for {date}</h2>"
+
+        # Create the side-by-side display table (2 columns for environments)
+        content += "<table style='width: 100%; table-layout: fixed;'><thead><tr>"
+
+        # Add environment column headers
+        for environment in environments:
+            content += f"<th style='width: 50%; text-align: center;'>{environment}</th>"
+
+        content += "</tr></thead><tbody><tr>"
+
+        # Add tables side by side for each environment
+        for environment, env_results in environments.items():
+            content += "<td style='vertical-align: top;'>"
+
+            # Initialize totals for this environment
+            total_requests = 0
+            total_failed_requests = 0
+
+            # Create the individual environment table
+            content += "<table style='width: 100%; border: 1px solid #ddd; border-collapse: collapse;'>"
+            content += "<thead style='background-color: #f0f0f0;'><tr>"
+            content += "<th>Customer</th><th>Total Requests</th><th>Failed Requests</th><th>% Failure</th>"
+            content += "</tr></thead><tbody>"
+
+            # Add rows for each customer in this environment
+            for customer, (requests, failed) in env_results.items():
+                # Update totals
+                total_requests += requests
+                total_failed_requests += failed
+
+                # Compute failure percentage
+                failure_percentage = (failed / requests) * 100 if requests > 0 else 0
+                content += f"<tr><td>{customer}</td><td>{requests}</td><td>{failed}</td><td>{failure_percentage:.2f}%</td></tr>"
+
+            # Add total row for this environment
+            total_failure_percentage = (total_failed_requests / total_requests) * 100 if total_requests > 0 else 0
+            content += f"<tr><td><b>Total</b></td><td><b>{total_requests}</b></td><td><b>{total_failed_requests}</b></td><td><b>{total_failure_percentage:.2f}%</b></td></tr>"
+
+            content += "</tbody></table></td>"
+
+        content += "</tr></tbody></table>"
+
+    # Check if the page already exists
+    existing_page = confluence.get_page_by_title(space=space_key, title=page_title)
+
+    if existing_page:
+        # Page exists, update it
+        page_id = existing_page.get('id')
+        print(f"Updating the existing page {page_title}...")
+        response = confluence.update_page(
+            page_id=page_id,
+            title=page_title,
+            body=content
+        )
+    else:
+        # Page doesn't exist, create a new page
+        response = confluence.create_page(
+            space=space_key,
+            title=page_title,
+            body=content
+        )
+
+    if response:
+        print("[INFO] Confluence page created successfully!")
+    else:
+        print("[ERROR] Failed to create Confluence page.")
+
+
+
 def generate_date_ranges(base_date: str, time_range: int, start_time: str, end_time: str) -> List[Tuple[str, str, str]]:
     """
     Generate a range of dates and their query periods.
@@ -282,7 +383,8 @@ def generate_date_ranges(base_date: str, time_range: int, start_time: str, end_t
 
 if __name__ == "__main__":
     # Parse arguments
-    parser = argparse.ArgumentParser(description="Process log queries for multiple dates.")
+    parser = argparse.ArgumentParser(
+        description="Process log queries for multiple dates and upload results to Confluence.")
     parser.add_argument('--date', required=True, help="The base date (YYYY-MM-DD)")
     parser.add_argument('--start_time', required=True, help="Start time (HH:mm:ssZ)")
     parser.add_argument('--end_time', required=True, help="End time (HH:mm:ssZ)")
@@ -290,6 +392,13 @@ if __name__ == "__main__":
     parser.add_argument('--eu_token', required=True, help="Logz.io EU API token")
     parser.add_argument('--na_token', required=True, help="Logz.io NA API token")
     parser.add_argument('--customers_file', required=True, help="Path to customers.yaml file")
+    parser.add_argument('--csv_filename', default="output.csv", help="Filename for the output CSV")
+    parser.add_argument('--confluence_url', required=True, help="Base URL for Confluence instance")
+    parser.add_argument('--confluence_username', required=True, help="Confluence username or email")
+    parser.add_argument('--confluence_api_token', required=True, help="Confluence API token")
+    parser.add_argument('--space_key', required=True, help="The key of the Confluence space")
+    parser.add_argument('--page_title', required=True, help="Title for the Confluence page")
+
     args = parser.parse_args()
 
     # Fetch namespaces
@@ -311,6 +420,16 @@ if __name__ == "__main__":
         for date, date_results in pool.starmap(process_date_task, tasks):
             all_date_results[date] = date_results
 
-    # Save results to file
     print("[INFO] All processing completed!")
-    log_results_and_export_to_csv(all_date_results, date_ranges)
+    # Save results to file
+    log_results_and_export_to_csv(all_date_results, date_ranges, args.csv_filename)
+
+    print("[INFO] Uploading results to Confluence...")
+    create_confluence_page(
+        confluence_url=args.confluence_url,
+        username=args.confluence_username,
+        api_token=args.confluence_api_token,
+        space_key=args.space_key,
+        page_title=args.page_title,
+        findings=all_date_results
+    )
