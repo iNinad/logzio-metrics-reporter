@@ -274,83 +274,89 @@ def create_confluence_page(confluence_url: str, username: str, api_token: str, s
             their customer metrics. Each metric includes the customer name,
             total requests, failed requests, and a computed failure percentage.
     """
-    confluence = Confluence(
-        url=confluence_url,
-        username=username,
-        password=api_token
-    )
-
-    content = f"<h1>{page_title}</h1>"
-
-    for date, environments in findings.items():
-        # Start date section
-        content += f"<h2>Results for {date}</h2>"
-
-        # Create the side-by-side display table (2 columns for environments)
-        content += "<table style='width: 100%; table-layout: fixed;'><thead><tr>"
-
-        # Add environment column headers
-        for environment in environments:
-            content += f"<th style='width: 50%; text-align: center;'>{environment}</th>"
-
-        content += "</tr></thead><tbody><tr>"
-
-        # Add tables side by side for each environment
-        for environment, env_results in environments.items():
-            content += "<td style='vertical-align: top;'>"
-
-            # Initialize totals for this environment
-            total_requests = 0
-            total_failed_requests = 0
-
-            # Create the individual environment table
-            content += "<table style='width: 100%; border: 1px solid #ddd; border-collapse: collapse;'>"
-            content += "<thead style='background-color: #f0f0f0;'><tr>"
-            content += "<th>Customer</th><th>Total Requests</th><th>Failed Requests</th><th>% Failure</th>"
-            content += "</tr></thead><tbody>"
-
-            # Add rows for each customer in this environment
-            for customer, (requests, failed) in env_results.items():
-                # Update totals
-                total_requests += requests
-                total_failed_requests += failed
-
-                # Compute failure percentage
-                failure_percentage = (failed / requests) * 100 if requests > 0 else 0
-                content += f"<tr><td>{customer}</td><td>{requests}</td><td>{failed}</td><td>{failure_percentage:.2f}%</td></tr>"
-
-            # Add total row for this environment
-            total_failure_percentage = (total_failed_requests / total_requests) * 100 if total_requests > 0 else 0
-            content += f"<tr><td><b>Total</b></td><td><b>{total_requests}</b></td><td><b>{total_failed_requests}</b></td><td><b>{total_failure_percentage:.2f}%</b></td></tr>"
-
-            content += "</tbody></table></td>"
-
-        content += "</tr></tbody></table>"
-
-    # Check if the page already exists
-    existing_page = confluence.get_page_by_title(space=space_key, title=page_title)
-
-    if existing_page:
-        # Page exists, update it
-        page_id = existing_page.get('id')
-        print(f"Updating the existing page {page_title}...")
-        response = confluence.update_page(
-            page_id=page_id,
-            title=page_title,
-            body=content
-        )
-    else:
-        # Page doesn't exist, create a new page
-        response = confluence.create_page(
-            space=space_key,
-            title=page_title,
-            body=content
+    try:
+        confluence = Confluence(
+            url=confluence_url,
+            username=username,
+            password=api_token
         )
 
-    if response:
-        print("[INFO] Confluence page created successfully!")
-    else:
-        print("[ERROR] Failed to create Confluence page.")
+        content = f"<h1>{page_title}</h1>"
+
+        for date, environments in findings.items():
+            # Start date section
+            content += f"<h2>Results for {date}</h2>"
+
+            # Create the side-by-side display table (2 columns for environments)
+            content += "<table style='width: 100%; table-layout: fixed;'><thead><tr>"
+
+            # Add environment column headers
+            for environment in environments:
+                content += f"<th style='width: 50%; text-align: center;'>{environment}</th>"
+
+            content += "</tr></thead><tbody><tr>"
+
+            # Add tables side by side for each environment
+            for environment, env_results in environments.items():
+                content += "<td style='vertical-align: top;'>"
+
+                # Initialize totals for this environment
+                total_requests = 0
+                total_failed_requests = 0
+
+                # Create the individual environment table
+                content += "<table style='width: 100%; border: 1px solid #ddd; border-collapse: collapse;'>"
+                content += "<thead style='background-color: #f0f0f0;'><tr>"
+                content += "<th>Customer</th><th>Total Requests</th><th>Failed Requests</th><th>% Failure</th>"
+                content += "</tr></thead><tbody>"
+
+                # Add rows for each customer in this environment
+                for customer, (requests, failed) in env_results.items():
+                    # Update totals
+                    total_requests += requests
+                    total_failed_requests += failed
+
+                    # Compute failure percentage
+                    failure_percentage = (failed / requests) * 100 if requests > 0 else 0
+                    content += f"<tr><td>{customer}</td><td>{requests}</td><td>{failed}</td><td>{failure_percentage:.2f}%</td></tr>"
+
+                # Add total row for this environment
+                total_failure_percentage = (total_failed_requests / total_requests) * 100 if total_requests > 0 else 0
+                content += f"<tr><td><b>Total</b></td><td><b>{total_requests}</b></td><td><b>{total_failed_requests}</b></td><td><b>{total_failure_percentage:.2f}%</b></td></tr>"
+
+                content += "</tbody></table></td>"
+
+            content += "</tr></tbody></table>"
+
+        # Check if the page already exists
+        existing_page = confluence.get_page_by_title(space=space_key, title=page_title)
+
+        if existing_page:
+            # Page exists, update it
+            page_id = existing_page.get('id')
+            print(f"Updating the existing page {page_title}...")
+            response = confluence.update_page(
+                page_id=page_id,
+                title=page_title,
+                body=content
+            )
+        else:
+            # Page doesn't exist, create a new page
+            response = confluence.create_page(
+                space=space_key,
+                title=page_title,
+                body=content
+            )
+
+        if response:
+            print("[INFO] Confluence page created successfully!")
+        else:
+            print("[ERROR] Failed to create Confluence page.")
+
+    except requests.exceptions.RequestException as e:
+        print(f"[INFO] Confluence is unreachable: {str(e)}")
+        print("[INFO] Skipping Confluence page creation and proceeding...")
+
 
 
 

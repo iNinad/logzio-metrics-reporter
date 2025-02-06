@@ -17,6 +17,7 @@ pipeline {
         string(name: 'END_TIME', defaultValue: '10:00:00Z', description: 'Enter the end time (HH:mm:ssZ)')
         string(name: 'TIME_RANGE', defaultValue: '14', description: 'Number of days before and after the base date')
         string(name: 'CONFLUENCE_PAGE', defaultValue: 'Logz.io Metrics', description: 'Enter the Confluence page name')
+        booleanParam(name: 'CHECKOUT_OAS_DEPLOYMENT', defaultValue: false, description: 'Select to checkout oas-deployment repository for customers.yml')
     }
     stages {
         stage('Checkout Current Repository') {
@@ -25,7 +26,10 @@ pipeline {
                 checkout scm
             }
         }
-        stage('Checkout oas-deployment Repository') {
+        stage('Optional Checkout oas-deployment Repository') {
+            when {
+                expression { params.CHECKOUT_OAS_DEPLOYMENT }
+            }
             steps {
                 echo '[INFO] Checking out oas-deployment repository for customers.yml...'
                 dir('oas-deployment') {
@@ -62,9 +66,9 @@ pipeline {
                     --time_range ${TIME_RANGE} \
                     --eu_token "$EU_TOKEN" \
                     --na_token "$NA_TOKEN" \
-                    --customers_file "oas-deployment/customers.yml"
-                    --page_title "${CONFLUENCE_PAGE}"
-                    --confluence_username "${CONFLUENCE_CREDENTIALS.username}"
+                    --customers_file "${params.CHECKOUT_OAS_DEPLOYMENT ? 'oas-deployment/customers.yml' : 'customers.yml'}" \
+                    --page_title "${CONFLUENCE_PAGE}" \
+                    --confluence_username "${CONFLUENCE_CREDENTIALS.username}" \
                     --confluence_api_token "${CONFLUENCE_CREDENTIALS.password}"
                 '''
             }
