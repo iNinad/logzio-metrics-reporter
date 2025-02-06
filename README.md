@@ -1,11 +1,11 @@
-# Logz.io Metrics Reporter
+# Logz.io Metrics Automation 
 
 ## Overview
 This repository contains:
 - A Python script to query logs from different environments (e.g., EU and NA) based on specific parameters, fetching data efficiently.
 - A Jenkins pipeline (`Jenkinsfile`) that automates the execution of the script.
 - Dependencies listed in `requirements.txt` for setting up a virtual environment.
-- Integration with the `oas-deployment` repository to fetch the `customers.yaml` configuration file using **sparse checkout**.
+- Integration with the `oas-deployment` repository to fetch the `customers.yml` configuration file using **sparse checkout**.
 
 The pipeline generates `output.csv` containing processed log data, attached as a build artifact for every pipeline execution.
 
@@ -17,7 +17,7 @@ The pipeline generates `output.csv` containing processed log data, attached as a
    - It leverages tokens securely fetched from Jenkins credentials for NA and EU environments.
 
 2. **Customers File Management**:
-   - `customers.yaml` from the `oas-deployment` repository is fetched automatically during the pipeline execution via sparse checkout.
+   - `customers.yml` from the `oas-deployment` repository is fetched automatically during the pipeline execution via sparse checkout.
 
 3. **Pipeline Automation**:
    - The `Jenkinsfile` defines a robust pipeline for setting up the environment, running the script, and archiving the result as a downloadable artifact.
@@ -31,8 +31,8 @@ The pipeline generates `output.csv` containing processed log data, attached as a
 
 ### On Jenkins:
 - Set up the following credentials in Jenkins:
-  - **LOGZ_NA_TOKEN**: Token for accessing NA logs.
-  - **LOGZ_EU_TOKEN**: Token for accessing EU logs.
+  - **Logzio_NA01_Token_SearchAPI**: Token for accessing NA logs.
+  - **Logzio_EU01_Token_SearchAPI**: Token for accessing EU logs.
 - Ensure Jenkins has Git configured for repository access.
 - Add Python to Jenkins' execution environment.
 
@@ -41,10 +41,10 @@ The pipeline generates `output.csv` containing processed log data, attached as a
 ## Repository Structure
 ```plaintext
 .
-├── Jenkinsfile               # Jenkins pipeline definition
-├── logz_metrics_handler.py   # Python script for querying logs
-├── requirements.txt          # Python dependencies
-├── README.md                 # Repository documentation (this file)
+├── Jenkinsfile                 # Jenkins pipeline definition
+├── logz_metrics_handler.py     # Python script for querying logs
+├── requirements.txt            # Python dependencies
+├── README.md                   # Repository documentation (this file)
 ```
 
 ---
@@ -54,7 +54,7 @@ The pipeline generates `output.csv` containing processed log data, attached as a
 ### 1. Clone the Repository
 ```bash
 git clone git@git.cias.one:tid/logzio-metrics-reporter.git
-cd log-query-automation
+cd logzio-metrics-reporter
 ```
 
 ### 2. Set Up Python Environment
@@ -69,13 +69,13 @@ Install the dependencies:
 pip install -r requirements.txt
 ```
 
-### 3. Fetch `oas-deployment`’s `customers.yaml` File
-Clone only the `customers.yaml` file using sparse checkout:
+### 3. Fetch `oas-deployment`’s `customers.yml` File
+Clone only the `customers.yml` file using sparse checkout:
 ```bash
 git init
 git remote add origin git@git.cias.one:tid/oas-deployment
 git sparse-checkout init
-git sparse-checkout set customers.yaml
+git sparse-checkout set customers.yml
 git pull origin main
 ```
 
@@ -93,7 +93,7 @@ python logz_metrics_handler.py \
     --time_range 14 \
     --eu_token "<EU_TOKEN>" \
     --na_token "<NA_TOKEN>" \
-    --customers_file "customers.yaml"
+    --customers_file "customers.yml"
 ```
 
 ### Jenkins Pipeline Execution
@@ -108,9 +108,9 @@ python logz_metrics_handler.py \
 2. **Pipeline Overview**:
    - The `Jenkinsfile` performs the following stages:
      - **Checkout Current Repository**: Fetches `logz_metrics_handler.py`.
-     - **Checkout oas-deployment**: Uses sparse checkout to fetch `customers.yaml`.
+     - **Checkout oas-deployment**: Uses sparse checkout to fetch `customers.yml`.
      - **Setup Python Environment**: Creates and activates a virtual environment.
-     - **Run logz_metrics_handler.py**: Executes the script with user-specified parameters.
+     - **Run logz_metrics_handler**: Executes the script with user-specified parameters.
      - **Archive Results**: Saves `output.csv` as a Jenkins build artifact.
 
 3. **Download Artifacts**:
@@ -141,8 +141,8 @@ For Jenkins jobs, the file is archived as a build artifact and can be downloaded
 ## Troubleshooting
 
 ### Common Errors:
-1. **Error: Unable to Locate customers.yaml**:
-   - Ensure `customers.yaml` is available under the specified `oas-deployment` directory.
+1. **Error: Unable to Locate customers.yml**:
+   - Ensure `customers.yml` is available under the specified `oas-deployment` directory.
    - Check the sparse checkout configuration in the pipeline or your local setup.
 
 2. **Python Errors During Script Execution**:
@@ -150,7 +150,7 @@ For Jenkins jobs, the file is archived as a build artifact and can be downloaded
    - Activate the virtual environment before running the script.
 
 3. **Jenkins Credential Errors**:
-   - Verify that the tokens (`LOGZ_NA_TOKEN` and `LOGZ_EU_TOKEN`) are correctly configured in Jenkins credentials and accessible by the pipeline.
+   - Verify that the tokens (`Logzio_EU01_Token_SearchAPI` and `Logzio_NA01_Token_SearchAPI`) are correctly configured in Jenkins credentials and accessible by the pipeline.
 
 ---
 
