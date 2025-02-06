@@ -110,7 +110,7 @@ def fetch_namespaces(customers_file: str) -> Dict[str, List[str]]:
     Fetch customer namespaces from a YAML file for each environment.
 
     Args:
-        customers_file (str): Path to the customers.yaml file.
+        customers_file (str): Path to the customers.yml file.
 
     Returns:
         Dict[str, List[str]]: A dictionary with namespaces categorized by environment.
@@ -393,10 +393,10 @@ if __name__ == "__main__":
     parser.add_argument('--na_token', required=True, help="Logz.io NA API token")
     parser.add_argument('--customers_file', required=True, help="Path to customers.yaml file")
     parser.add_argument('--csv_filename', default="output.csv", help="Filename for the output CSV")
-    parser.add_argument('--confluence_url', required=True, help="Base URL for Confluence instance")
+    parser.add_argument('--confluence_url', default="https://jira.onespan.com/confluence/", help="Base URL for Confluence instance")
     parser.add_argument('--confluence_username', required=True, help="Confluence username or email")
     parser.add_argument('--confluence_api_token', required=True, help="Confluence API token")
-    parser.add_argument('--space_key', required=True, help="The key of the Confluence space")
+    parser.add_argument('--space_key', default="TeamSystemEngineering", help="The key of the Confluence space")
     parser.add_argument('--page_title', required=True, help="Title for the Confluence page")
 
     args = parser.parse_args()
