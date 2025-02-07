@@ -1,21 +1,20 @@
-jenkinsGitCredentialIdentifier = '71463459-4767-4f61-9c93-f3e211ae1b4b'
 pipeline {
     agent {
-        node {
-            label 'linux'
-            customWorkspace ('/var/lib/jenkins/workspace/logzio_metrics_collection')
+        docker {
+            image 'python:3.10-slim'
+            args '-v /tmp:/tmp --user root'
         }
     }
     environment {
         NA_TOKEN = credentials('Logzio_NA01_Token_SearchAPI') // Securely fetch NA token
         EU_TOKEN = credentials('Logzio_EU01_Token_SearchAPI') // Securely fetch EU token
-        CONFLUENCE_CREDENTIALS = credentials('CONFLUENCE_IMPORTER') // Securely fetch Confluence credentials
     }
     parameters {
-        string(name: 'DATE', defaultValue: '2025-01-20', description: 'Enter the base date (YYYY-MM-DD)')
+        choice(name: 'PLATFORM', choices: ['production', 'staging'], description: 'Select the platform for querying and collecting metrics.')
+        string(name: 'DATE', defaultValue: "${java.time.LocalDate.now().minusDays(8)}", description: 'Enter the base date (YYYY-MM-DD)')
         string(name: 'START_TIME', defaultValue: '08:00:00Z', description: 'Enter the start time (HH:mm:ssZ)')
         string(name: 'END_TIME', defaultValue: '10:00:00Z', description: 'Enter the end time (HH:mm:ssZ)')
-        string(name: 'TIME_RANGE', defaultValue: '14', description: 'Number of days before and after the base date')
+        string(name: 'TIME_RANGE', defaultValue: '8', description: 'Number of days before and after the base date')
         string(name: 'CONFLUENCE_PAGE', defaultValue: 'Logz.io Metrics', description: 'Enter the Confluence page name')
         booleanParam(name: 'CHECKOUT_OAS_DEPLOYMENT', defaultValue: false, description: 'Select to checkout oas-deployment repository for customers.yml')
     }
@@ -39,7 +38,7 @@ pipeline {
                             [$class: 'SparseCheckoutPaths', paths: ['customers.yml']] // Sparse checkout for just `customers.yml`
                         ],
                         userRemoteConfigs: [[url: 'git@git.cias.one:tid/oas-deployment',
-                        credentialsId: jenkinsGitCredentialIdentifier,]]
+                        credentialsId: 'ciasGitCredentialIdentifier',]]
                     ])
                 }
             }
@@ -48,29 +47,33 @@ pipeline {
             steps {
                 echo '[INFO] Setting up Python environment...'
                 sh '''
-                python3 -m venv venv
-                source venv/bin/activate
                 pip install --no-cache-dir -r requirements.txt
                 '''
             }
         }
         stage('Run Script') {
             steps {
-                echo '[INFO] Running Python script...'
-                sh '''
-                source venv/bin/activate
-                python logz_metrics_handler.py \
-                    --date ${DATE} \
-                    --start_time ${START_TIME} \
-                    --end_time ${END_TIME} \
-                    --time_range ${TIME_RANGE} \
-                    --eu_token "$EU_TOKEN" \
-                    --na_token "$NA_TOKEN" \
-                    --customers_file "${params.CHECKOUT_OAS_DEPLOYMENT ? 'oas-deployment/customers.yml' : 'customers.yml'}" \
-                    --page_title "${CONFLUENCE_PAGE}" \
-                    --confluence_username "${CONFLUENCE_CREDENTIALS.username}" \
-                    --confluence_api_token "${CONFLUENCE_CREDENTIALS.password}"
-                '''
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'CONFLUENCE_IMPORTER', usernameVariable: 'confluenceUser', passwordVariable: 'confluencePassword')]) {
+                        def platformValue = params.PLATFORM == 'production' ? 'prd' : 'stg'
+                        def customersFile = params.CHECKOUT_OAS_DEPLOYMENT ? 'oas-deployment/customers.yml' : 'customers.yml'
+                        echo '[INFO] Running Python script...'
+                        sh """
+                        python logz_metrics_handler.py \
+                            --platform "${platformValue}" \
+                            --date ${DATE} \
+                            --start_time ${START_TIME} \
+                            --end_time ${END_TIME} \
+                            --time_range ${TIME_RANGE} \
+                            --eu_token "$EU_TOKEN" \
+                            --na_token "$NA_TOKEN" \
+                            --customers_file "${customersFile}" \
+                            --page_title "${CONFLUENCE_PAGE}" \
+                            --confluence_username "${confluenceUser}" \
+                            --confluence_api_token "${confluencePassword}"
+                        """
+                    }
+                }
             }
         }
         stage('Archive Results') {
