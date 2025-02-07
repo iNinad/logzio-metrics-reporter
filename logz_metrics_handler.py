@@ -1,23 +1,40 @@
 import argparse
 import csv
+import time
 from datetime import datetime, timedelta
 from multiprocessing import Pool
 from typing import List, Tuple, Dict, Any
 
 import requests
 import yaml
-from atlassian import Confluence  # Used for the Confluence Integration
-from requests.exceptions import RequestException
+from atlassian import Confluence
+from requests.exceptions import RequestException, HTTPError
 from tabulate import tabulate
 
+# Constants - Centralized for better readability and maintainability
+EU_ENVIRONMENT = 'eu01-prd'
+NA_ENVIRONMENT = 'na01-prd'
+BASE_API_URL_EU = "https://api-eu.logz.io/v1/search"
+BASE_API_URL_NA = "https://api.logz.io/v1/search"
+NAMESPACE_PREFIX = 'tid-{platform_prefix}-'
+NAMESPACE_SUFFIX = '-oas'
+DEFAULT_CSV_FILENAME = "output.csv"
 
+# Retry configuration for HTTP requests
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 2
+
+
+# ==========================
 # Utility Functions
+# ==========================
+
 def get_headers(token: str) -> Dict[str, str]:
     """
     Generate HTTP headers for the API request.
 
     Args:
-        token (str): The API token either for EU or NA environments.
+        token (str): The API token for the specified environment.
 
     Returns:
         Dict[str, str]: The HTTP headers dictionary.
@@ -34,99 +51,49 @@ def get_url(environment: str) -> str:
     Get the correct API URL based on the environment.
 
     Args:
-        environment (str): The environment name ('eu01-prd' or 'na01-prd').
+        environment (str): Environment name ('eu01-prd' or 'na01-prd').
 
     Returns:
-        str: The appropriate base URL for the API.
+        str: Corresponding base URL for the API.
     """
-    return "https://api.logz.io/v1/search" if environment == 'na01-prd' else "https://api-eu.logz.io/v1/search"
+    return BASE_API_URL_NA if environment == NA_ENVIRONMENT else BASE_API_URL_EU
 
 
-# Core Functions
-def log_results_and_export_to_csv(
-        results: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]],
-        date_ranges: List[Tuple[str, str, str]],
-        csv_filename: str = "output.csv"
-) -> None:
-    """
-    Logs query results for each date and environment and saves them to a CSV file.
-
-    Args:
-        results (Dict[str, Dict[str, Dict[str, Tuple[int, int]]]]): Query results categorized by date and environment.
-        date_ranges (List[Tuple[str, str, str]]): List of tuples with date, start, and end times.
-        csv_filename (str): Output CSV file name (default: "output.csv").
-    """
-    with open(csv_filename, mode='w', newline='') as csv_file:
-        csv_writer = csv.writer(csv_file)
-
-        for date, environments in results.items():
-            # Match date with its respective start and end times
-            start_time, end_time = next(
-                ((start, end) for d, start, end in date_ranges if d == date), (None, None))
-
-            print(f"\n========== Results for date: {date} (Time: {start_time} to {end_time}) ==========\n")
-            csv_writer.writerow([f"# Results for date: {date} (Time: {start_time} to {end_time})"])
-
-            for environment, env_results in environments.items():
-                print(f"--- Results for environment: {environment} ---\n")
-                csv_writer.writerow([f"# Results for environment: {environment}"])
-
-                # Define table headers
-                headers = ["Customer", "Total Requests", "Failed Requests", "% Failure"]
-                table: List[List[Any]] = []
-                total_requests = 0
-                total_failed_requests = 0
-
-                # Populate the table
-                for customer, (total_requests_customer, failed_requests_customer) in env_results.items():
-                    failure_percentage = (
-                        (failed_requests_customer / total_requests_customer) * 100
-                        if total_requests_customer > 0
-                        else 0
-                    )
-                    table.append([
-                        customer, total_requests_customer, failed_requests_customer, f"{failure_percentage:.2f}%"
-                    ])
-                    # Aggregate totals
-                    total_requests += total_requests_customer
-                    total_failed_requests += failed_requests_customer
-
-                # Add a final row showing the overall totals
-                total_failure_percentage = (
-                    (total_failed_requests / total_requests) * 100 if total_requests > 0 else 0
-                )
-                table.append(["Total", total_requests, total_failed_requests, f"{total_failure_percentage:.2f}%"])
-
-                print(tabulate(table, headers=headers, tablefmt="pretty"))
-                print()
-
-                # Write data to CSV
-                csv_writer.writerow(headers)
-                csv_writer.writerows(table)
-                csv_writer.writerow([])  # Blank line between sections
-
+# ==========================
+# Core Utility Functions
+# ==========================
 
 def fetch_namespaces(customers_file: str, platform_prefix: str) -> Dict[str, List[str]]:
     """
     Fetch customer namespaces from a YAML file for each environment.
 
     Args:
-        customers_file (str): Path to the customers.yml file.
-        platform_prefix (str): Platform for fetching the customer data.
+        customers_file (str): Path to the customers.yaml file.
+        platform_prefix (str): Prefix for filtering namespaces.
 
     Returns:
-        Dict[str, List[str]]: A dictionary with namespaces categorized by environment.
+        Dict[str, List[str]]: A dictionary mapping environments to namespaces.
     """
-    with open(customers_file, 'r') as file:
-        data = yaml.safe_load(file)
-    environments: Dict[str, List[str]] = {'eu01-prd': [], 'na01-prd': []}
+    try:
+        with open(customers_file, 'r') as file:
+            data = yaml.safe_load(file)
+    except (FileNotFoundError, yaml.YAMLError) as e:
+        raise RuntimeError(f"Error loading customers YAML file: {e}")
+
+    # Initialize namespace lists for each environment
+    environments: Dict[str, List[str]] = {EU_ENVIRONMENT: [], NA_ENVIRONMENT: []}
+
+    # Iterate over environments in YAML file, process namespaces
     for env, namespaces in environments.items():
-        # Parse target environments and filter valid namespaces
         target_envs = data.get('platforms', {}).get(env, {}).get('targetEnvironments', [])
-        for env in target_envs:
-            namespace = env.get('namespace', '')
-            if namespace.startswith(f'tid-{platform_prefix}-') and namespace.endswith('-oas'):
-                namespaces.append(namespace[len(f'tid-{platform_prefix}-'):-len('-oas')])
+        for env_data in target_envs:
+            namespace = env_data.get('namespace', '')
+            if namespace.startswith(NAMESPACE_PREFIX.format(platform_prefix=platform_prefix)) and namespace.endswith(
+                    NAMESPACE_SUFFIX):
+                # Extract namespace without prefix and suffix
+                namespaces.append(
+                    namespace[len(NAMESPACE_PREFIX.format(platform_prefix=platform_prefix)):-len(NAMESPACE_SUFFIX)])
+
     return environments
 
 
@@ -136,13 +103,13 @@ def build_queries(namespace_lists: Dict[str, List[str]], start_time: str, end_ti
     Build search queries for all requests and failed requests for each namespace.
 
     Args:
-        namespace_lists (Dict[str, List[str]]): The namespace lists categorized by environment.
-        start_time (str): The start time of the query (ISO8601 format).
-        end_time (str): The end time of the query (ISO8601 format).
-        platform_prefix (str): Platform for building the queries.
+        namespace_lists (Dict[str, List[str]]): Namespaces grouped by environment.
+        start_time (str): Query start time (ISO8601 format).
+        end_time (str): Query end time (ISO8601 format).
+        platform_prefix (str): Platform prefix for namespaces.
 
     Returns:
-        Dict[str, Dict[str, List[Dict[str, Any]]]]: A nested dictionary of queries grouped by environment and namespace.
+        Dict[str, Dict[str, List[Dict[str, Any]]]]: Nested dictionary of queries (by environment and namespace).
     """
     return {
         environment: {
@@ -153,7 +120,8 @@ def build_queries(namespace_lists: Dict[str, List[str]], start_time: str, end_ti
                         "bool": {
                             "must": [
                                 {"range": {"@timestamp": {"gte": start_time, "lte": end_time}}},
-                                {"term": {"kubernetes.namespace_name": f"tid-{platform_prefix}-ws"}},
+                                {"term": {
+                                    "kubernetes.namespace_name": f"{NAMESPACE_PREFIX.format(platform_prefix=platform_prefix)}ws"}},
                                 {"exists": {"field": "upstream_status"}},
                                 {"term": {"tenant": namespace}}
                             ]
@@ -167,7 +135,8 @@ def build_queries(namespace_lists: Dict[str, List[str]], start_time: str, end_ti
                         "bool": {
                             "must": [
                                 {"range": {"@timestamp": {"gte": start_time, "lte": end_time}}},
-                                {"term": {"kubernetes.namespace_name": f"tid-{platform_prefix}-ws"}},
+                                {"term": {
+                                    "kubernetes.namespace_name": f"{NAMESPACE_PREFIX.format(platform_prefix=platform_prefix)}ws"}},
                                 {"exists": {"field": "upstream_status"}},
                                 {"term": {"tenant": namespace}},
                                 {"range": {"upstream_status": {"gte": 500, "lte": 599}}}
@@ -185,27 +154,36 @@ def build_queries(namespace_lists: Dict[str, List[str]], start_time: str, end_ti
 
 def execute_query(environment: str, query: Dict[str, Any], eu_token: str, na_token: str) -> int:
     """
-    Execute a given query against the API.
+    Execute a specific query against the Logz.io API with retry logic.
 
     Args:
-        environment (str): The environment name ('eu01-prd' or 'na01-prd').
-        query (Dict[str, Any]): The query payload.
-        eu_token (str): The API token for EU environment.
-        na_token (str): The API token for NA environment.
+        environment (str): Target environment ('eu01-prd' or 'na01-prd').
+        query (Dict[str, Any]): Query payload for the API.
+        eu_token (str): Logz.io API token for the EU region.
+        na_token (str): Logz.io API token for the NA region.
 
     Returns:
-        int: The total number of matching hits for the query.
+        int: Total number of hits for the query.
     """
     url = get_url(environment)
-    headers = get_headers(eu_token if environment != 'na01-prd' else na_token)
+    headers = get_headers(eu_token if environment != NA_ENVIRONMENT else na_token)
 
-    response = requests.post(url, headers=headers, json=query)
+    retries = 0
+    while retries < MAX_RETRIES:
+        try:
+            response = requests.post(url, headers=headers, json=query)
+            response.raise_for_status()  # Raise HTTPError for bad responses
+            return response.json().get("hits", {}).get("total", 0)
+        except (RequestException, HTTPError) as e:
+            print(f"[ERROR] Query failed in {environment} (Retry {retries + 1}/{MAX_RETRIES}): {e}")
+            retries += 1
+            if retries == MAX_RETRIES:
+                print("[ERROR] Maximum retries reached.")
+                return 0
+            print(f"[INFO] Retrying in {RETRY_BACKOFF_SECONDS} seconds...")
+            time.sleep(RETRY_BACKOFF_SECONDS)  # Backoff before the next retry
 
-    if response.status_code != 200:
-        print(f"[ERROR] Query failed in {environment}: {response.status_code} - {response.text}")
-        return 0
-
-    return response.json().get("hits", {}).get("total", 0)
+    return 0
 
 
 def process_date_task(
@@ -218,155 +196,172 @@ def process_date_task(
         platform_prefix: str
 ) -> Tuple[str, Dict[str, Dict[str, Tuple[int, int]]]]:
     """
-    Process queries for a specific date in all environments.
+    Process all queries for a specific date across all environments.
 
     Args:
-        date (str): The date to process.
-        namespace_lists (Dict[str, List[str]]): Namespaces grouped by environment.
-        start_time (str): Start time of the query period.
-        end_time (str): End time of the query period.
-        eu_token (str): Logz.io API token for EU environment.
-        na_token (str): Logz.io API token for NA environment.
-        platform_prefix (str): Platform for building the queries.
+        date (str): Date to process metrics for.
+        namespace_lists (Dict[str, List[str]]): Namespaces categorized by environment.
+        start_time (str): Start time of the query window.
+        end_time (str): End time of the query window.
+        eu_token (str): API token for EU region.
+        na_token (str): API token for NA region.
+        platform_prefix (str): Platform's prefix for filtering data.
 
     Returns:
-        Tuple[str, Dict[str, Dict[str, Tuple[int, int]]]]: The date and corresponding results.
+        Tuple[str, Dict]: Date and environment-wise results (total/failed requests).
     """
-    print(f"[INFO] Starting processing for date: {date}")
+    print(f"[INFO] Processing tasks for date: {date}")
 
-    # Build queries for this date
     queries = build_queries(namespace_lists, start_time, end_time, platform_prefix)
     date_results: Dict[str, Dict[str, Tuple[int, int]]] = {}
 
     for environment, query_list in queries.items():
-        print(f"[INFO] Processing environment: {environment} for date: {date}")
-        results: Dict[str, Tuple[int, int]] = {}
-
+        results = {}
         for namespace, query_set in query_list.items():
+            # Ensure query set has exactly two queries (total and failed requests)
             if len(query_set) != 2:
-                print(f"[WARNING] Missing queries for namespace: {namespace}. Skipping...")
+                print(f"[WARNING] Missing queries for namespace {namespace}. Skipping...")
                 continue
 
-            # Execute queries
+            # Execute total and failed queries
             total_requests = execute_query(environment, query_set[0], eu_token, na_token)
             failed_requests = execute_query(environment, query_set[1], eu_token, na_token)
 
-            print(f"[INFO] Namespace: {namespace}, Total: {total_requests}, Failed: {failed_requests}.")
+            print(f"[INFO] Namespace: {namespace} on {date} during {start_time.split("T")[1]} - "
+                  f"{end_time.split("T")[1]}, Total: {total_requests}, Failed: {failed_requests}.")
             results[namespace] = (total_requests, failed_requests)
 
         date_results[environment] = results
 
-    print(f"[INFO] Completed processing for date: {date}")
     return date, date_results
 
 
-def create_confluence_page(confluence_url: str, username: str, api_token: str, space_key: str, page_title: str,
-                           findings: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]],
-                           date_ranges: List[Tuple[str, str, str]],) -> None:
+def log_results_and_export_to_csv(
+        results: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]],
+        date_ranges: List[Tuple[str, str, str]],
+        csv_filename: str = DEFAULT_CSV_FILENAME
+) -> None:
     """
-    Creates a Confluence page with detailed findings and metrics,
-    displaying environments side by side for the given dates.
+    Logs query results for each date and environment and saves them to a CSV file.
 
     Args:
-        confluence_url: The base URL of the Confluence server where the page
-            should be created.
-        username: The username required to authenticate against the Confluence
-            server.
-        api_token: The API token or password for authenticating the user.
-        space_key: The Confluence space key where the page will be created.
-        page_title: The title of the new Confluence page.
-        findings: A dictionary mapping dates to a hierarchy of environments and
-            their customer metrics. Each metric includes the customer name,
-            total requests, failed requests, and a computed failure percentage.
+        results (Dict[str, Dict[str, Dict[str, Tuple[int, int]]]]): Query results categorized by date and environment.
+        date_ranges (List[Tuple[str, str, str]]): List of tuples with date, start, and end times.
+        csv_filename (str): Output CSV file name.
+    """
+    with open(csv_filename, mode='w', newline='') as csv_file:
+        csv_writer = csv.writer(csv_file)
+
+        for date, environments in results.items():
+            # Match date with respective start and end times
+            start_time, end_time = next(
+                ((start, end) for d, start, end in date_ranges if d == date), (None, None))
+
+            print(f"\n========== Results for date: {date} ({start_time.split("T")[1]} {end_time.split("T")[1]}) ==========\n")
+            csv_writer.writerow([f"Results for date: {date} ({start_time.split("T")[1]} {end_time.split("T")[1]})"])
+
+            for environment, env_results in environments.items():
+                print(f"--- Results for environment: {environment} ---\n")
+                csv_writer.writerow([f"# Results for environment: {environment}"])
+
+                headers = ["Customer", "Total Requests", "Failed Requests", "% Failure"]
+                table: List[List[Any]] = []
+                total_requests = 0
+                total_failed_requests = 0
+
+                for customer, (total_requests_customer, failed_requests_customer) in env_results.items():
+                    failure_percentage = (
+                        (failed_requests_customer / total_requests_customer) * 100
+                        if total_requests_customer > 0
+                        else 0
+                    )
+                    table.append(
+                        [customer, total_requests_customer, failed_requests_customer, f"{failure_percentage:.2f}%"]
+                    )
+                    total_requests += total_requests_customer
+                    total_failed_requests += failed_requests_customer
+
+                total_failure_percentage = (
+                    (total_failed_requests / total_requests) * 100 if total_requests > 0 else 0
+                )
+                table.append(["Total", total_requests, total_failed_requests, f"{total_failure_percentage:.2f}%"])
+
+                print(tabulate(table, headers=headers, tablefmt="pretty"))
+                print()
+
+                csv_writer.writerow(headers)
+                csv_writer.writerows(table)
+                csv_writer.writerow([])  # Blank line between sections
+
+
+def create_confluence_page(
+        confluence_url: str, username: str, api_token: str,
+        space_key: str, page_title: str,
+        findings: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]],
+        date_ranges: List[Tuple[str, str, str]]
+) -> None:
+    """
+    Creates a Confluence page with detailed findings and metrics.
+
+    Args:
+        confluence_url (str): Base URL of the Confluence server.
+        username (str): Username to authenticate with Confluence.
+        api_token (str): API token or password for authentication.
+        space_key (str): Confluence space key.
+        page_title (str): Title of the new Confluence page.
+        findings (Dict): Results grouped by date and environment.
         date_ranges (List[Tuple[str, str, str]]): List of tuples with date, start, and end times.
     """
     try:
-        confluence = Confluence(
-            url=confluence_url,
-            username=username,
-            password=api_token
-        )
+        confluence = Confluence(url=confluence_url, username=username, password=api_token)
 
         content = f"<h1>{page_title}</h1>"
 
         for date, environments in findings.items():
             start_time, end_time = next(
-                ((start, end) for d, start, end in date_ranges if d == date), (None, None))
+                ((start, end) for d, start, end in date_ranges if d == date), (None, None)
+            )
 
-            # Start date section
-            content += f"<h2>Results for {date} (Time: {start_time} to {end_time})</h2>"
+            content += f"<h2>Results for {date} ({start_time.split("T")[1]} to {end_time.split("T")[1]})</h2>"
 
-            # Create the side-by-side display table (2 columns for environments)
+            # Side-by-side display for environments
             content += "<table style='width: 100%; table-layout: fixed;'><thead><tr>"
 
-            # Add environment column headers
             for environment in environments:
                 content += f"<th style='width: 50%; text-align: center;'>{environment}</th>"
 
             content += "</tr></thead><tbody><tr>"
 
-            # Add tables side by side for each environment
             for environment, env_results in environments.items():
                 content += "<td style='vertical-align: top;'>"
-
-                # Initialize totals for this environment
                 total_requests = 0
                 total_failed_requests = 0
 
-                # Create the individual environment table
-                content += "<table style='width: 100%; border: 1px solid #ddd; border-collapse: collapse;'>"
-                content += "<thead style='background-color: #f0f0f0;'><tr>"
-                content += "<th>Customer</th><th>Total Requests</th><th>Failed Requests</th><th>% Failure</th>"
-                content += "</tr></thead><tbody>"
-
-                # Add rows for each customer in this environment
-                for customer, (requests, failed) in env_results.items():
-                    # Update totals
-                    total_requests += requests
-                    total_failed_requests += failed
-
-                    # Compute failure percentage
-                    failure_percentage = (failed / requests) * 100 if requests > 0 else 0
-                    content += f"<tr><td>{customer}</td><td>{requests}</td><td>{failed}</td><td>{failure_percentage:.2f}%</td></tr>"
-
-                # Add total row for this environment
-                total_failure_percentage = (total_failed_requests / total_requests) * 100 if total_requests > 0 else 0
+                content += "<table style='width: 100%; border: 1px solid black;'>"
+                content += "<thead><tr><th>Customer</th><th>Total Requests</th><th>Failed Requests</th><th>% Failure</th></tr></thead><tbody>"
+                for customer, (req, fail) in env_results.items():
+                    failure_percentage = (fail / req) * 100 if req > 0 else 0
+                    content += f"<tr><td>{customer}</td><td>{req}</td><td>{fail}</td><td>{failure_percentage:.2f}%</td></tr>"
+                    total_requests += req
+                    total_failed_requests += fail
+                total_failure_percentage = (
+                    (total_failed_requests / total_requests) * 100 if total_requests > 0 else 0
+                )
                 content += f"<tr><td><b>Total</b></td><td><b>{total_requests}</b></td><td><b>{total_failed_requests}</b></td><td><b>{total_failure_percentage:.2f}%</b></td></tr>"
 
                 content += "</tbody></table></td>"
-
             content += "</tr></tbody></table>"
 
-        # Check if the page already exists
         existing_page = confluence.get_page_by_title(space=space_key, title=page_title)
 
         if existing_page:
-            # Page exists, update it
-            page_id = existing_page.get('id')
-            print(f"Updating the existing page {page_title}...")
-            response = confluence.update_page(
-                page_id=page_id,
-                title=page_title,
-                body=content
-            )
+            page_id = existing_page['id']
+            confluence.update_page(page_id=page_id, title=page_title, body=content)
         else:
-            # Page doesn't exist, create a new page
-            response = confluence.create_page(
-                space=space_key,
-                title=page_title,
-                body=content
-            )
-
-        if response:
-            print("[INFO] Confluence page created successfully!")
-        else:
-            print("[ERROR] Failed to create Confluence page.")
-
+            confluence.create_page(space=space_key, title=page_title, body=content)
+        print("[INFO] Confluence page created successfully!")
     except RequestException as e:
-        print(f"[INFO] Confluence is unreachable: {str(e)}")
-        print("[INFO] Skipping Confluence page creation and proceeding...")
-
-
+        print(f"[ERROR] Confluence connection issue: {e}")
 
 
 def generate_date_ranges(base_date: str, time_range: int, start_time: str, end_time: str) -> List[Tuple[str, str, str]]:
@@ -380,7 +375,7 @@ def generate_date_ranges(base_date: str, time_range: int, start_time: str, end_t
         end_time (str): End time of each day (HH:mm:ssZ format).
 
     Returns:
-        List[Tuple[str, str, str]]: List of tuples containing date, start time, and end time.
+        List[Tuple[str, str, str]]: List containing date and start/end times.
     """
     base_date_obj = datetime.strptime(base_date, "%Y-%m-%d")
     start_window = base_date_obj - timedelta(days=time_range)
@@ -397,56 +392,62 @@ def generate_date_ranges(base_date: str, time_range: int, start_time: str, end_t
 
 
 if __name__ == "__main__":
-    # Parse arguments
-    parser = argparse.ArgumentParser(
-        description="Process log queries for multiple dates and upload results to Confluence.")
-    parser.add_argument('--platform', required=True, help="Platform (prd or stg)")
-    parser.add_argument('--date', required=True, help="The base date (YYYY-MM-DD)")
-    parser.add_argument('--start_time', required=True, help="Start time (HH:mm:ssZ)")
-    parser.add_argument('--end_time', required=True, help="End time (HH:mm:ssZ)")
-    parser.add_argument('--time_range', type=int, required=True, help="Number of days before and after the base date")
-    parser.add_argument('--eu_token', required=True, help="Logz.io EU API token")
-    parser.add_argument('--na_token', required=True, help="Logz.io NA API token")
-    parser.add_argument('--customers_file', required=True, help="Path to customers.yaml file")
-    parser.add_argument('--csv_filename', default="output.csv", help="Filename for the output CSV")
-    parser.add_argument('--confluence_url', default="https://jira.onespan.com/confluence", help="Base URL for Confluence instance")
-    parser.add_argument('--confluence_username', required=True, help="Confluence username or email")
-    parser.add_argument('--confluence_api_token', required=True, help="Confluence API token")
-    parser.add_argument('--space_key', default="TeamSystemEngineering", help="The key of the Confluence space")
-    parser.add_argument('--page_title', required=True, help="Title for the Confluence page")
+    # Define argument parser
+    parser = argparse.ArgumentParser(description="Process log queries and save results to CSV/Confluence.")
+    parser.add_argument('--platform', required=True, help="Platform (prd or stg).")
+    parser.add_argument('--date', required=True, help="Base date (YYYY-MM-DD).")
+    parser.add_argument('--start_time', required=True, help="Start time (HH:mm:ssZ).")
+    parser.add_argument('--end_time', required=True, help="End time (HH:mm:ssZ).")
+    parser.add_argument('--time_range', type=int, required=True, help="Number of days before/after base date.")
+    parser.add_argument('--eu_token', required=True, help="Logz.io EU API token.")
+    parser.add_argument('--na_token', required=True, help="Logz.io NA API token.")
+    parser.add_argument('--customers_file', required=True, help="Path to customers.yaml.")
+    parser.add_argument('--csv_filename', default=DEFAULT_CSV_FILENAME, help="Output CSV filename.")
+    parser.add_argument('--confluence_url', required=True, help="Confluence base URL.")
+    parser.add_argument('--confluence_username', required=True, help="Confluence username (or email).")
+    parser.add_argument('--confluence_api_token', required=True, help="Confluence API token.")
+    parser.add_argument('--space_key', required=True, help="Confluence space key.")
+    parser.add_argument('--page_title', required=True, help="Title for the Confluence page.")
 
+    # Parse arguments
     args = parser.parse_args()
 
-    # Fetch namespaces
-    namespace_lists = fetch_namespaces(args.customers_file, args.platform)
+    try:
+        # Fetch namespaces
+        namespace_lists = fetch_namespaces(args.customers_file, args.platform)
 
-    # Generate date ranges
-    date_ranges = generate_date_ranges(args.date, args.time_range, args.start_time, args.end_time)
+        # Generate date ranges
+        date_ranges = generate_date_ranges(args.date, args.time_range, args.start_time, args.end_time)
 
-    # Process all dates using multiprocessing
-    print("[INFO] Starting multiprocessing for all dates...")
-    all_date_results: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]] = {}
+        # Process all dates using multiprocessing
+        print("[INFO] Starting batch processing for all dates...")
+        all_date_results: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]] = {}
 
-    with Pool() as pool:
-        tasks = [
-            (date, namespace_lists, start_time, end_time, args.eu_token, args.na_token, args.platform)
-            for date, start_time, end_time in date_ranges
-        ]
+        with Pool() as pool:
+            tasks = [
+                (date, namespace_lists, start_time, end_time, args.eu_token, args.na_token, args.platform)
+                for date, start_time, end_time in date_ranges
+            ]
 
-        for date, date_results in pool.starmap(process_date_task, tasks):
-            all_date_results[date] = date_results
+            for date, date_results in pool.starmap(process_date_task, tasks):
+                all_date_results[date] = date_results
 
-    print("[INFO] All processing completed!")
-    # Save results to file
-    log_results_and_export_to_csv(all_date_results, date_ranges, args.csv_filename)
+        print("[INFO] Batch processing completed.")
 
-    print("[INFO] Uploading results to Confluence...")
-    create_confluence_page(
-        confluence_url=args.confluence_url,
-        username=args.confluence_username,
-        api_token=args.confluence_api_token,
-        space_key=args.space_key,
-        page_title=args.page_title,
-        findings=all_date_results,
-        date_ranges=date_ranges
-    )
+        # Save results to CSV
+        log_results_and_export_to_csv(all_date_results, date_ranges, args.csv_filename)
+
+        # Upload results to Confluence
+        print("[INFO] Uploading results to Confluence...")
+        create_confluence_page(
+            confluence_url=args.confluence_url,
+            username=args.confluence_username,
+            api_token=args.confluence_api_token,
+            space_key=args.space_key,
+            page_title=args.page_title,
+            findings=all_date_results,
+            date_ranges=date_ranges
+        )
+
+    except Exception as e:
+        print(f"[ERROR] An error occurred: {e}")

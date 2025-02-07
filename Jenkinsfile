@@ -9,47 +9,104 @@ pipeline {
         EU_TOKEN = credentials('Logzio_EU01_Token_SearchAPI') // Securely fetch EU token
     }
     parameters {
-        choice(name: 'PLATFORM', choices: ['production', 'staging'], description: 'Select the platform for querying and collecting metrics.')
-        string(name: 'DATE', defaultValue: "${java.time.LocalDate.now().minusDays(8)}", description: 'Enter the base date (YYYY-MM-DD)')
-        string(name: 'START_TIME', defaultValue: '08:00:00Z', description: 'Enter the start time (HH:mm:ssZ)')
-        string(name: 'END_TIME', defaultValue: '10:00:00Z', description: 'Enter the end time (HH:mm:ssZ)')
-        string(name: 'TIME_RANGE', defaultValue: '8', description: 'Number of days before and after the base date')
-        string(name: 'CONFLUENCE_PAGE', defaultValue: 'Logz.io Metrics', description: 'Enter the Confluence page name')
-        booleanParam(name: 'CHECKOUT_OAS_DEPLOYMENT', defaultValue: false, description: 'Select to checkout oas-deployment repository for customers.yml')
+        choice(
+            name: 'PLATFORM',
+            choices: ['production', 'staging'],
+            description: 'Select the platform for querying and collecting metrics.'
+        )
+        string(
+            name: 'DATE',
+            defaultValue: "${java.time.LocalDate.now().minusDays(7)}",
+            description: 'Enter the base date (YYYY-MM-DD)'
+        )
+        string(
+            name: 'START_TIME',
+            defaultValue: '08:00:00Z',
+            description: 'Enter the start time (HH:mm:ssZ)'
+        )
+        string(
+            name: 'END_TIME',
+            defaultValue: '10:00:00Z',
+            description: 'Enter the end time (HH:mm:ssZ)'
+        )
+        string(
+            name: 'TIME_RANGE',
+            defaultValue: '8',
+            description: 'Number of days before and after the base date'
+        )
+        string(
+            name: 'CONFLUENCE_PAGE',
+            defaultValue: 'Logz.io Metrics',
+            description: 'Enter the Confluence page name'
+        )
+        booleanParam(
+            name: 'CHECKOUT_OAS_DEPLOYMENT',
+            defaultValue: false,
+            description: 'Select to checkout oas-deployment repository for customers.yml'
+        )
     }
     stages {
-        stage('Checkout Current Repository') {
+        stage('Input Validation') {
             steps {
-                echo '[INFO] Checking out repository containing script.py...'
-                checkout scm
-            }
-        }
-        stage('Optional Checkout oas-deployment Repository') {
-            when {
-                expression { params.CHECKOUT_OAS_DEPLOYMENT }
-            }
-            steps {
-                echo '[INFO] Checking out oas-deployment repository for customers.yml...'
-                dir('oas-deployment') {
-                    checkout([$class: 'GitSCM',
-                        branches: [[name: '*/eu01-prd']], // Replace 'eu01-prd' with the appropriate branch if different
-                        extensions: [
-                            [$class: 'SparseCheckoutPaths', paths: ['customers.yml']] // Sparse checkout for just `customers.yml`
-                        ],
-                        userRemoteConfigs: [[url: 'git@git.cias.one:tid/oas-deployment',
-                        credentialsId: 'ciasGitCredentialIdentifier',]]
-                    ])
-                }
-            }
-        }
-        stage('Setup Python Environment') {
-            steps {
-                echo '[INFO] Setting up Python environment...'
+                echo '[INFO] Validating input parameters...'
                 sh '''
-                python3 -m venv venv
-                . venv/bin/activate
-                pip install --no-cache-dir -r requirements.txt
+                if ! [[ "$DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                    echo "[ERROR] Invalid date format. Expected YYYY-MM-DD."
+                    exit 1
+                fi
+                if ! [[ "$START_TIME" =~ ^[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+                    echo "[ERROR] Invalid start time format. Expected HH:mm:ssZ."
+                    exit 1
+                fi
+                if ! [[ "$END_TIME" =~ ^[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+                    echo "[ERROR] Invalid end time format. Expected HH:mm:ssZ."
+                    exit 1
+                fi
+                if ! [[ "$TIME_RANGE" =~ ^[0-9]+$ ]]; then
+                    echo "[ERROR] Invalid time range. Expected a positive number."
+                    exit 1
+                fi
                 '''
+            }
+        }
+        stage('Checkout and Setup') {
+            parallel {
+                stage('Checkout Repositories') {
+                    steps {
+                        echo '[INFO] Checking out repository containing script.py...'
+                        checkout scm
+
+                        // Optional sparse checkout for oas-deployment repository
+                        when {
+                            expression { params.CHECKOUT_OAS_DEPLOYMENT }
+                        }
+                        dir('oas-deployment') {
+                            steps {
+                                echo '[INFO] Checking out oas-deployment repository for customers.yml...'
+                                checkout([$class: 'GitSCM',
+                                    branches: [[name: '*/eu01-prd']],
+                                    extensions: [
+                                        [$class: 'SparseCheckoutPaths', paths: ['customers.yml']]
+                                    ],
+                                    userRemoteConfigs: [[
+                                        url: 'git@git.cias.one:tid/oas-deployment',
+                                        credentialsId: 'ciasGitCredentialIdentifier'
+                                    ]]
+                                ])
+                            }
+                        }
+                    }
+                }
+                stage('Setup Python Environment') {
+                    steps {
+                        echo '[INFO] Setting up Python environment...'
+                        sh '''
+                        python3 -m venv venv
+                        . venv/bin/activate
+                        pip install --no-cache-dir -r requirements.txt
+                        '''
+                    }
+                }
             }
         }
         stage('Run Script') {
