@@ -261,7 +261,8 @@ def process_date_task(
 
 
 def create_confluence_page(confluence_url: str, username: str, api_token: str, space_key: str, page_title: str,
-                           findings: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]]) -> None:
+                           findings: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]],
+                           date_ranges: List[Tuple[str, str, str]],) -> None:
     """
     Creates a Confluence page with detailed findings and metrics,
     displaying environments side by side for the given dates.
@@ -277,6 +278,7 @@ def create_confluence_page(confluence_url: str, username: str, api_token: str, s
         findings: A dictionary mapping dates to a hierarchy of environments and
             their customer metrics. Each metric includes the customer name,
             total requests, failed requests, and a computed failure percentage.
+        date_ranges (List[Tuple[str, str, str]]): List of tuples with date, start, and end times.
     """
     try:
         confluence = Confluence(
@@ -288,8 +290,11 @@ def create_confluence_page(confluence_url: str, username: str, api_token: str, s
         content = f"<h1>{page_title}</h1>"
 
         for date, environments in findings.items():
+            start_time, end_time = next(
+                ((start, end) for d, start, end in date_ranges if d == date), (None, None))
+
             # Start date section
-            content += f"<h2>Results for {date}</h2>"
+            content += f"<h2>Results for {date} (Time: {start_time} to {end_time})</h2>"
 
             # Create the side-by-side display table (2 columns for environments)
             content += "<table style='width: 100%; table-layout: fixed;'><thead><tr>"
@@ -442,5 +447,6 @@ if __name__ == "__main__":
         api_token=args.confluence_api_token,
         space_key=args.space_key,
         page_title=args.page_title,
-        findings=all_date_results
+        findings=all_date_results,
+        date_ranges=date_ranges
     )
