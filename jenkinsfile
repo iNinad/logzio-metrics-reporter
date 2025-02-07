@@ -2,7 +2,6 @@ pipeline {
     agent {
         docker {
             image 'python:3.10-slim'
-            args '-v /tmp:/tmp --user root'
         }
     }
     environment {
@@ -47,6 +46,8 @@ pipeline {
             steps {
                 echo '[INFO] Setting up Python environment...'
                 sh '''
+                python3 -m venv venv
+                . venv/bin/activate
                 pip install --no-cache-dir -r requirements.txt
                 '''
             }
@@ -59,6 +60,7 @@ pipeline {
                         def customersFile = params.CHECKOUT_OAS_DEPLOYMENT ? 'oas-deployment/customers.yml' : 'customers.yml'
                         echo '[INFO] Running Python script...'
                         sh """
+                        . venv/bin/activate
                         python logz_metrics_handler.py \
                             --platform "${platformValue}" \
                             --date ${DATE} \
