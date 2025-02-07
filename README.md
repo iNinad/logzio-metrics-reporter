@@ -1,11 +1,11 @@
-# Logz.io Metrics Automation 
+# Logz.io Metrics Reporter 
 
 ## Overview
 This repository contains:
 - A Python script to query logs from different environments (e.g., EU and NA) based on specific parameters, fetching data efficiently.
 - A Jenkins pipeline (`Jenkinsfile`) that automates the execution of the script.
 - Dependencies listed in `requirements.txt` for setting up a virtual environment.
-- Integration with the `oas-deployment` repository to fetch the `customers.yml` configuration file using **sparse checkout**.
+- Optional integration with the `oas-deployment` repository to fetch the `customers.yml` configuration file using **sparse checkout**.
 
 The pipeline generates `output.csv` containing processed log data, attached as a build artifact for every pipeline execution.
 
@@ -17,7 +17,7 @@ The pipeline generates `output.csv` containing processed log data, attached as a
    - It leverages tokens securely fetched from Jenkins credentials for NA and EU environments.
 
 2. **Customers File Management**:
-   - `customers.yml` from the `oas-deployment` repository is fetched automatically during the pipeline execution via sparse checkout.
+   - If selected, `customers.yml` from the `oas-deployment` repository is fetched automatically during the pipeline execution via sparse checkout. Otherwise, you can provide a custom customers.yml
 
 3. **Pipeline Automation**:
    - The `Jenkinsfile` defines a robust pipeline for setting up the environment, running the script, and archiving the result as a downloadable artifact.
@@ -26,7 +26,7 @@ The pipeline generates `output.csv` containing processed log data, attached as a
 
 ## Prerequisites
 ### To Run Locally:
-- **Python 3.8+** installed.
+- **Python 3.10+** installed.
 - Install `pip` for managing dependencies.
 
 ### On Jenkins:
@@ -34,7 +34,7 @@ The pipeline generates `output.csv` containing processed log data, attached as a
   - **Logzio_NA01_Token_SearchAPI**: Token for accessing NA logs.
   - **Logzio_EU01_Token_SearchAPI**: Token for accessing EU logs.
 - Ensure Jenkins has Git configured for repository access.
-- Add Python to Jenkins' execution environment.
+
 
 ---
 
@@ -43,6 +43,7 @@ The pipeline generates `output.csv` containing processed log data, attached as a
 .
 ├── Jenkinsfile                 # Jenkins pipeline definition
 ├── logz_metrics_handler.py     # Python script for querying logs
+├── customers.yml               # Openshift namespaces information
 ├── requirements.txt            # Python dependencies
 ├── README.md                   # Repository documentation (this file)
 ```
@@ -69,7 +70,7 @@ Install the dependencies:
 pip install -r requirements.txt
 ```
 
-### 3. Fetch `oas-deployment`’s `customers.yml` File
+### 3. (Optional) Fetch `oas-deployment`’s `customers.yml` File
 Clone only the `customers.yml` file using sparse checkout:
 ```bash
 git init
@@ -87,30 +88,37 @@ git pull origin main
 Execute the script with required arguments:
 ```bash
 python logz_metrics_handler.py \
+    --platform "prd" \
     --date 2025-01-26 \
     --start_time 08:00:00Z \
     --end_time 10:00:00Z \
     --time_range 14 \
     --eu_token "<EU_TOKEN>" \
     --na_token "<NA_TOKEN>" \
-    --customers_file "customers.yml"
+    --customers_file "customers.yml" \ 
+    --page_title "Logz.io Metrics" \
+    --confluence_username "<Username>" \
+    --confluence_api_token "<Password>"
 ```
 
 ### Jenkins Pipeline Execution
 1. **Trigger the Pipeline**:
    - Open your Jenkins job linked to this repository.
    - Provide the following parameters:
+     - **PLATFORM**: The platform for querying and collecting metrics (production or staging).
      - **DATE**: Base date in the format `YYYY-MM-DD`.
      - **START_TIME**: Start time in the format `HH:mm:ssZ` (UTC).
      - **END_TIME**: End time in the format `HH:mm:ssZ` (UTC).
      - **TIME_RANGE**: Number of days before and after the base date.
-
+     - **CONFLUENCE_PAGE**: Enter the Confluence page name.
+     - **CHECKOUT_OAS_DEPLOYMENT**: Select to checkout oas-deployment repository for customers.yml.
 2. **Pipeline Overview**:
    - The `Jenkinsfile` performs the following stages:
      - **Checkout Current Repository**: Fetches `logz_metrics_handler.py`.
-     - **Checkout oas-deployment**: Uses sparse checkout to fetch `customers.yml`.
+     - **Optional oas-deployment Checkout**: Uses sparse checkout to fetch `customers.yml`.
      - **Setup Python Environment**: Creates and activates a virtual environment.
      - **Run logz_metrics_handler**: Executes the script with user-specified parameters.
+     - **Update Confluence Page**: Updates Confluence page using atlassian-python-api.
      - **Archive Results**: Saves `output.csv` as a Jenkins build artifact.
 
 3. **Download Artifacts**:
@@ -120,13 +128,15 @@ python logz_metrics_handler.py \
 
 ## Example Pipeline Parameters
 
-| Parameter    | Value        | Description                                    |
-|--------------|--------------|------------------------------------------------|
-| `DATE`       | `2025-01-26` | Base date for querying logs.                   |
-| `START_TIME` | `08:00:00Z`  | Start time in UTC.                             |
-| `END_TIME`   | `10:00:00Z`  | End time in UTC.                               |
-| `TIME_RANGE` | `14`         | Number of days before and after the base date. |
-
+| Parameter                 | Value             | Description                                                     |
+|---------------------------|-------------------|-----------------------------------------------------------------|
+| `PLATFORM`                | `Production`      | The platform for querying and collecting metrics.               |
+| `DATE`                    | `2025-01-26`      | Base date for querying logs.                                    |
+| `START_TIME`              | `08:00:00Z`       | Start time in UTC.                                              |
+| `END_TIME`                | `10:00:00Z`       | End time in UTC.                                                |
+| `TIME_RANGE`              | `14`              | Number of days before and after the base date.                  |
+| `CONFLUENCE_PAGE`         | `Logz.io Metrics` | The Confluence page name.                                       |
+| `CHECKOUT_OAS_DEPLOYMENT` | `false`           | Select to checkout oas-deployment repository for customers.yml. |
 ---
 
 ## Output
@@ -142,8 +152,8 @@ For Jenkins jobs, the file is archived as a build artifact and can be downloaded
 
 ### Common Errors:
 1. **Error: Unable to Locate customers.yml**:
-   - Ensure `customers.yml` is available under the specified `oas-deployment` directory.
-   - Check the sparse checkout configuration in the pipeline or your local setup.
+   - Ensure `customers.yml` is available in this directory or under the specified `oas-deployment` directory, if CHECKOUT_OAS_DEPLOYMENT option is selected.
+   - Check the sparse checkout configuration in the pipeline or your local setup, if CHECKOUT_OAS_DEPLOYMENT option is selected.
 
 2. **Python Errors During Script Execution**:
    - Ensure all required dependencies are installed using `pip install -r requirements.txt`.
