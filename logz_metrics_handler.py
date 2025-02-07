@@ -5,9 +5,10 @@ from multiprocessing import Pool
 from typing import List, Tuple, Dict, Any
 
 import requests
+from requests.exceptions import RequestException
 import yaml
 from tabulate import tabulate
-from atlassian import Confluence  # Used for the Confluence Integration
+from atlassian import Confluence# Used for the Confluence Integration
 
 
 # Utility Functions
@@ -105,32 +106,32 @@ def log_results_and_export_to_csv(
                 csv_writer.writerow([])  # Blank line between sections
 
 
-def fetch_namespaces(customers_file: str) -> Dict[str, List[str]]:
+def fetch_namespaces(customers_file: str, platform_prefix: str) -> Dict[str, List[str]]:
     """
     Fetch customer namespaces from a YAML file for each environment.
 
     Args:
         customers_file (str): Path to the customers.yml file.
+        platform_prefix (str): Platform for fetching the customer data.
 
     Returns:
         Dict[str, List[str]]: A dictionary with namespaces categorized by environment.
     """
     with open(customers_file, 'r') as file:
         data = yaml.safe_load(file)
-
     environments: Dict[str, List[str]] = {'eu01-prd': [], 'na01-prd': []}
     for env, namespaces in environments.items():
         # Parse target environments and filter valid namespaces
         target_envs = data.get('platforms', {}).get(env, {}).get('targetEnvironments', [])
         for env in target_envs:
             namespace = env.get('namespace', '')
-            if namespace.startswith('tid-prd-') and namespace.endswith('-oas'):
-                namespaces.append(namespace[len('tid-prd-'):-len('-oas')])
+            if namespace.startswith(f'tid-{platform_prefix}-') and namespace.endswith('-oas'):
+                namespaces.append(namespace[len(f'tid-{platform_prefix}-'):-len('-oas')])
     return environments
 
 
-def build_queries(namespace_lists: Dict[str, List[str]], start_time: str, end_time: str) -> Dict[
-    str, Dict[str, List[Dict[str, Any]]]]:
+def build_queries(namespace_lists: Dict[str, List[str]], start_time: str, end_time: str, platform_prefix: str) \
+        -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
     """
     Build search queries for all requests and failed requests for each namespace.
 
@@ -138,6 +139,7 @@ def build_queries(namespace_lists: Dict[str, List[str]], start_time: str, end_ti
         namespace_lists (Dict[str, List[str]]): The namespace lists categorized by environment.
         start_time (str): The start time of the query (ISO8601 format).
         end_time (str): The end time of the query (ISO8601 format).
+        platform_prefix (str): Platform for building the queries.
 
     Returns:
         Dict[str, Dict[str, List[Dict[str, Any]]]]: A nested dictionary of queries grouped by environment and namespace.
@@ -151,7 +153,7 @@ def build_queries(namespace_lists: Dict[str, List[str]], start_time: str, end_ti
                         "bool": {
                             "must": [
                                 {"range": {"@timestamp": {"gte": start_time, "lte": end_time}}},
-                                {"term": {"kubernetes.namespace_name": "tid-prd-ws"}},
+                                {"term": {"kubernetes.namespace_name": f"tid-{platform_prefix}-ws"}},
                                 {"exists": {"field": "upstream_status"}},
                                 {"term": {"tenant": namespace}}
                             ]
@@ -165,10 +167,10 @@ def build_queries(namespace_lists: Dict[str, List[str]], start_time: str, end_ti
                         "bool": {
                             "must": [
                                 {"range": {"@timestamp": {"gte": start_time, "lte": end_time}}},
-                                {"term": {"kubernetes.namespace_name": "tid-prd-ws"}},
+                                {"term": {"kubernetes.namespace_name": f"tid-{platform_prefix}-ws"}},
                                 {"exists": {"field": "upstream_status"}},
                                 {"term": {"tenant": namespace}},
-                                {"term": {"upstream_status": "500"}}
+                                {"range": {"upstream_status": {"gte": 500, "lte": 599}}}
                             ]
                         }
                     },
@@ -212,7 +214,8 @@ def process_date_task(
         start_time: str,
         end_time: str,
         eu_token: str,
-        na_token: str
+        na_token: str,
+        platform_prefix: str
 ) -> Tuple[str, Dict[str, Dict[str, Tuple[int, int]]]]:
     """
     Process queries for a specific date in all environments.
@@ -224,6 +227,7 @@ def process_date_task(
         end_time (str): End time of the query period.
         eu_token (str): Logz.io API token for EU environment.
         na_token (str): Logz.io API token for NA environment.
+        platform_prefix (str): Platform for building the queries.
 
     Returns:
         Tuple[str, Dict[str, Dict[str, Tuple[int, int]]]]: The date and corresponding results.
@@ -231,7 +235,7 @@ def process_date_task(
     print(f"[INFO] Starting processing for date: {date}")
 
     # Build queries for this date
-    queries = build_queries(namespace_lists, start_time, end_time)
+    queries = build_queries(namespace_lists, start_time, end_time, platform_prefix)
     date_results: Dict[str, Dict[str, Tuple[int, int]]] = {}
 
     for environment, query_list in queries.items():
@@ -353,7 +357,7 @@ def create_confluence_page(confluence_url: str, username: str, api_token: str, s
         else:
             print("[ERROR] Failed to create Confluence page.")
 
-    except requests.exceptions.RequestException as e:
+    except RequestException as e:
         print(f"[INFO] Confluence is unreachable: {str(e)}")
         print("[INFO] Skipping Confluence page creation and proceeding...")
 
@@ -391,6 +395,7 @@ if __name__ == "__main__":
     # Parse arguments
     parser = argparse.ArgumentParser(
         description="Process log queries for multiple dates and upload results to Confluence.")
+    parser.add_argument('--platform', required=True, help="Platform (prd or stg)")
     parser.add_argument('--date', required=True, help="The base date (YYYY-MM-DD)")
     parser.add_argument('--start_time', required=True, help="Start time (HH:mm:ssZ)")
     parser.add_argument('--end_time', required=True, help="End time (HH:mm:ssZ)")
@@ -399,7 +404,7 @@ if __name__ == "__main__":
     parser.add_argument('--na_token', required=True, help="Logz.io NA API token")
     parser.add_argument('--customers_file', required=True, help="Path to customers.yaml file")
     parser.add_argument('--csv_filename', default="output.csv", help="Filename for the output CSV")
-    parser.add_argument('--confluence_url', default="https://jira.onespan.com/confluence/", help="Base URL for Confluence instance")
+    parser.add_argument('--confluence_url', default="https://jira.onespan.com/confluence", help="Base URL for Confluence instance")
     parser.add_argument('--confluence_username', required=True, help="Confluence username or email")
     parser.add_argument('--confluence_api_token', required=True, help="Confluence API token")
     parser.add_argument('--space_key', default="TeamSystemEngineering", help="The key of the Confluence space")
@@ -408,7 +413,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Fetch namespaces
-    namespace_lists = fetch_namespaces(args.customers_file)
+    namespace_lists = fetch_namespaces(args.customers_file, args.platform)
 
     # Generate date ranges
     date_ranges = generate_date_ranges(args.date, args.time_range, args.start_time, args.end_time)
@@ -419,7 +424,7 @@ if __name__ == "__main__":
 
     with Pool() as pool:
         tasks = [
-            (date, namespace_lists, start_time, end_time, args.eu_token, args.na_token)
+            (date, namespace_lists, start_time, end_time, args.eu_token, args.na_token, args.platform)
             for date, start_time, end_time in date_ranges
         ]
 
