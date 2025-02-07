@@ -5,10 +5,10 @@ from multiprocessing import Pool
 from typing import List, Tuple, Dict, Any
 
 import requests
-from requests.exceptions import RequestException
 import yaml
+from atlassian import Confluence  # Used for the Confluence Integration
+from requests.exceptions import RequestException
 from tabulate import tabulate
-from atlassian import Confluence# Used for the Confluence Integration
 
 
 # Utility Functions
