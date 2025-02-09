@@ -364,13 +364,13 @@ def create_confluence_page(
         print(f"[ERROR] Confluence connection issue: {e}")
 
 
-def generate_date_ranges(base_date: str, time_range: int, start_time: str, end_time: str) -> List[Tuple[str, str, str]]:
+def generate_date_ranges(base_date: str, date_offset_range: int, start_time: str, end_time: str) -> List[Tuple[str, str, str]]:
     """
     Generate a range of dates and their query periods.
 
     Args:
         base_date (str): The base date in YYYY-MM-DD format.
-        time_range (int): Number of days before and after the base date.
+        date_offset_range (int): Number of days before and after the base date.
         start_time (str): Start time of each day (HH:mm:ssZ format).
         end_time (str): End time of each day (HH:mm:ssZ format).
 
@@ -378,8 +378,8 @@ def generate_date_ranges(base_date: str, time_range: int, start_time: str, end_t
         List[Tuple[str, str, str]]: List containing date and start/end times.
     """
     base_date_obj = datetime.strptime(base_date, "%Y-%m-%d")
-    start_window = base_date_obj - timedelta(days=time_range)
-    end_window = base_date_obj + timedelta(days=time_range)
+    start_window = base_date_obj - timedelta(days=date_offset_range)
+    end_window = base_date_obj + timedelta(days=date_offset_range)
 
     return [
         (
@@ -398,7 +398,7 @@ if __name__ == "__main__":
     parser.add_argument('--date', required=True, help="Base date (YYYY-MM-DD).")
     parser.add_argument('--start_time', required=True, help="Start time (HH:mm:ssZ).")
     parser.add_argument('--end_time', required=True, help="End time (HH:mm:ssZ).")
-    parser.add_argument('--time_range', type=int, required=True, help="Number of days before/after base date.")
+    parser.add_argument('--date_offset_range', type=int, required=True, help="Number of days before/after base date.")
     parser.add_argument('--eu_token', required=True, help="Logz.io EU API token.")
     parser.add_argument('--na_token', required=True, help="Logz.io NA API token.")
     parser.add_argument('--customers_file', required=True, help="Path to customers.yaml.")
@@ -417,7 +417,7 @@ if __name__ == "__main__":
         namespace_lists = fetch_namespaces(args.customers_file, args.platform)
 
         # Generate date ranges
-        date_ranges = generate_date_ranges(args.date, args.time_range, args.start_time, args.end_time)
+        date_ranges = generate_date_ranges(args.date, args.date_offset_range, args.start_time, args.end_time)
 
         # Process all dates using multiprocessing
         print("[INFO] Starting batch processing for all dates...")

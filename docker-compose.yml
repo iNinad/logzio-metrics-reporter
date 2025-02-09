@@ -17,7 +17,7 @@ services:
         "--date", "2025-01-30",
         "--start_time", "08:00:00Z",
         "--end_time", "10:00:00Z",
-        "--time_range", "7",
+        "--date_offset_range", "7",
         "--eu_token", "${EU_API_TOKEN}",
         "--na_token", "${NA_API_TOKEN}",
         "--customers_file", "/app/customers.yaml",

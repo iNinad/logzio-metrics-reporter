@@ -92,7 +92,7 @@ python logz_metrics_handler.py \
     --date "2025-02-04" \
     --start_time "08:00:00Z" \
     --end_time "10:00:00Z" \
-    --time_range 14 \
+    --date_offset_range 14 \
     --eu_token "<EU_TOKEN>" \
     --na_token "<NA_TOKEN>" \
     --customers_file "customers.yml" \
@@ -117,7 +117,7 @@ docker run --rm logz-metrics-handler \
     --date "2025-02-04" \
     --start_time "08:00:00Z" \
     --end_time "10:00:00Z" \
-    --time_range 14 \
+    --date_offset_range 14 \
     --eu_token "<EU_TOKEN>" \
     --na_token "<NA_TOKEN>" \
     --customers_file "/app/customers.yaml" \
@@ -181,7 +181,7 @@ Provide the following parameters during pipeline execution:
 | `PLATFORM`                | Target platform for queries (`prd` or `stg`).                             |
 | `DATE`                    | Base date (`YYYY-MM-DD`).                                                 |
 | `START_TIME`, `END_TIME`  | Start and End time in the format `HH:mm:ssZ` (UTC).                       |
-| `TIME_RANGE`              | Time range for date-based processing.                                     |
+| `DATE_OFFSET_RANGE`       | Time range for date-based processing.                                     |
 | `CONFLUENCE_PAGE`         | Title of the page to create on Confluence.                                |
 | `CHECKOUT_OAS_DEPLOYMENT` | Boolean flag to fetch the `customers.yml` file from `oas-deployment`.     |
 

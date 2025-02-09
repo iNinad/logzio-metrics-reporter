@@ -30,7 +30,7 @@ pipeline {
             description: 'Enter the end time (HH:mm:ssZ)'
         )
         string(
-            name: 'TIME_RANGE',
+            name: 'DATE_OFFSET_RANGE',
             defaultValue: '8',
             description: 'Number of days before and after the base date'
         )
@@ -62,7 +62,7 @@ pipeline {
                     echo "[ERROR] Invalid end time format. Expected HH:mm:ssZ."
                     exit 1
                 fi
-                if ! [[ "$TIME_RANGE" =~ ^[0-9]+$ ]]; then
+                if ! [[ "DATE_OFFSET_RANGE" =~ ^[0-9]+$ ]]; then
                     echo "[ERROR] Invalid time range. Expected a positive number."
                     exit 1
                 fi
@@ -123,7 +123,7 @@ pipeline {
                             --date ${DATE} \
                             --start_time ${START_TIME} \
                             --end_time ${END_TIME} \
-                            --time_range ${TIME_RANGE} \
+                            --date_offset_range ${DATE_OFFSET_RANGE} \
                             --eu_token "$EU_TOKEN" \
                             --na_token "$NA_TOKEN" \
                             --customers_file "${customersFile}" \
