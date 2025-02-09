@@ -1,181 +1,209 @@
-# Logz.io Metrics Reporter 
+# Logz.io Metrics Reporter
 
 ## Overview
 This repository contains:
-- A Python script to query logs from different environments (e.g., EU and NA) based on specific parameters, fetching data efficiently.
-- A Jenkins pipeline (`Jenkinsfile`) that automates the execution of the script.
-- Dependencies listed in `requirements.txt` for setting up a virtual environment.
-- Optional integration with the `oas-deployment` repository to fetch the `customers.yml` configuration file using **sparse checkout**.
+- A Python script (`logz_metrics_handler.py`) that queries logs from different environments (e.g., EU and NA) based on specified parameters, processes them, and generates results in CSV format or uploads them to Confluence.
+- A Jenkins pipeline (`Jenkinsfile`) that automates script execution and handles environment setup.
+- A Dockerization option, including `docker-compose` support, to run the script in a containerized environment.
+- Dependencies listed in `requirements.txt`.
 
-The pipeline generates `output.csv` containing processed log data, attached as a build artifact for every pipeline execution.
+The output, including `output.csv`, is generated as an artifact for every pipeline or container execution, and the details are optionally published to a Confluence page.
 
 ---
 
 ## Features
-1. **Script Execution**: 
-   - The Python script queries logs based on user-defined parameters such as date, start time, and end time.
-   - It leverages tokens securely fetched from Jenkins credentials for NA and EU environments.
+1. **Log Query and Processing**:
+   - The script queries logs from `Logz.io` based on runtime parameters (e.g., date, time range, namespaces).
+   - Tokens can be securely provided via arguments or environment variables set in a `.env` file.
 
-2. **Customers File Management**:
-   - If selected, `customers.yml` from the `oas-deployment` repository is fetched automatically during the pipeline execution via sparse checkout. Otherwise, you can provide a custom customers.yml
+2. **Output and Reporting**:
+   - Generates a CSV file (`output.csv`) containing processed results.
+   - Optionally creates a Confluence page for the metrics.
 
-3. **Pipeline Automation**:
-   - The `Jenkinsfile` defines a robust pipeline for setting up the environment, running the script, and archiving the result as a downloadable artifact.
+3. **Docker Support**:
+   - Run the script easily in a containerized environment using either Docker or `docker-compose`, eliminating the need for manual environment setup.
+
+4. **Pipeline Automation**:
+   - The `Jenkinsfile` automates repository checkout, script execution, output generation, and artifact uploading.
+
+5. **Sparse Checkout**:
+   - Fetches only the necessary `customers.yml` file from an additional Git repository (`oas-deployment`) when required.
 
 ---
 
 ## Prerequisites
+
 ### To Run Locally:
-- **Python 3.10+** installed.
-- Install `pip` for managing dependencies.
+- **Python 3.10+**
+- `pip` for managing dependencies.
+
+### On Docker or Docker Compose:
+- **Docker** and **Docker Compose** installed.
+- A `.env` file in the repository root containing the required tokens.
 
 ### On Jenkins:
-- Set up the following credentials in Jenkins:
-  - **Logzio_NA01_Token_SearchAPI**: Token for accessing NA logs.
-  - **Logzio_EU01_Token_SearchAPI**: Token for accessing EU logs.
-- Ensure Jenkins has Git configured for repository access.
+1. Add the following credentials:
+   - **Logzio_NA01_Token_SearchAPI**: Token for accessing NA logs.
+   - **Logzio_EU01_Token_SearchAPI**: Token for accessing EU logs.
+   - **CONFLUENCE_IMPORTER**: Credentials for Confluence.
 
+2. Ensure Jenkins has Git configured to access this repository and optionally the `oas-deployment` repository.
 
 ---
 
 ## Repository Structure
+
 ```plaintext
 .
 ├── Jenkinsfile                 # Jenkins pipeline definition
 ├── logz_metrics_handler.py     # Python script for querying logs
-├── customers.yml               # Openshift namespaces information
+├── customers.yaml              # Openshift namespaces information
 ├── requirements.txt            # Python dependencies
-├── README.md                   # Repository documentation (this file)
+├── Dockerfile                  # Docker configuration
+├── docker-compose.yml          # Docker Compose setup
+├── .env.example                # Example of the environment configuration file
+├── README.md                   # Repository documentation
 ```
 
 ---
 
-## Setup Instructions
+## Setup and Usage Instructions
 
-### 1. Clone the Repository
+### 1. **Run Locally**
+
+#### Clone the Repository:
 ```bash
 git clone git@git.cias.one:tid/logzio-metrics-reporter.git
 cd logzio-metrics-reporter
 ```
 
-### 2. Set Up Python Environment
-Create and activate a virtual environment:
+#### Set Up Python Environment:
 ```bash
 python3 -m venv venv
-source venv/bin/activate   # On Windows: venv\Scripts\activate
-```
-
-Install the dependencies:
-```bash
+source venv/bin/activate   # For Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 3. (Optional) Fetch `oas-deployment`’s `customers.yml` File
-Clone only the `customers.yml` file using sparse checkout:
-```bash
-git init
-git remote add origin git@git.cias.one:tid/oas-deployment
-git sparse-checkout init
-git sparse-checkout set customers.yml
-git pull origin main
-```
-
----
-
-## Usage Instructions
-
-### Run the Script Locally
-Execute the script with required arguments:
+#### Run the Script:
+Execute the script by providing the required arguments:
 ```bash
 python logz_metrics_handler.py \
     --platform "prd" \
-    --date 2025-01-26 \
-    --start_time 08:00:00Z \
-    --end_time 10:00:00Z \
+    --date "2025-02-04" \
+    --start_time "08:00:00Z" \
+    --end_time "10:00:00Z" \
     --time_range 14 \
     --eu_token "<EU_TOKEN>" \
     --na_token "<NA_TOKEN>" \
-    --customers_file "customers.yml" \ 
+    --customers_file "customers.yml" \
     --page_title "Logz.io Metrics" \
-    --confluence_username "<Username>" \
-    --confluence_api_token "<Password>"
+    --confluence_username "<USERNAME>" \
+    --confluence_password "<CONFLUENCE_PASSWORD>"
 ```
 
-### Jenkins Pipeline Execution
-1. **Trigger the Pipeline**:
-   - Open your Jenkins job linked to this repository.
-   - Provide the following parameters:
-     - **PLATFORM**: The platform for querying and collecting metrics (production or staging).
-     - **DATE**: Base date in the format `YYYY-MM-DD`.
-     - **START_TIME**: Start time in the format `HH:mm:ssZ` (UTC).
-     - **END_TIME**: End time in the format `HH:mm:ssZ` (UTC).
-     - **TIME_RANGE**: Number of days before and after the base date.
-     - **CONFLUENCE_PAGE**: Enter the Confluence page name.
-     - **CHECKOUT_OAS_DEPLOYMENT**: Select to checkout oas-deployment repository for customers.yml.
-2. **Pipeline Overview**:
-   - The `Jenkinsfile` performs the following stages:
-     - **Checkout Current Repository**: Fetches `logz_metrics_handler.py`.
-     - **Optional oas-deployment Checkout**: Uses sparse checkout to fetch `customers.yml`.
-     - **Setup Python Environment**: Creates and activates a virtual environment.
-     - **Run logz_metrics_handler**: Executes the script with user-specified parameters.
-     - **Update Confluence Page**: Updates Confluence page using atlassian-python-api.
-     - **Archive Results**: Saves `output.csv` as a Jenkins build artifact.
+---
 
-3. **Download Artifacts**:
-   - After a successful build, find `output.csv` in the **Artifacts** section on the Jenkins web interface.
+### 2. **Run with Docker**
+
+#### Build Docker Image:
+```bash
+docker build -t logz-metrics-handler .
+```
+
+#### Run the Script in a Container:
+```bash
+docker run --rm logz-metrics-handler \
+    --platform "prd" \
+    --date "2025-02-04" \
+    --start_time "08:00:00Z" \
+    --end_time "10:00:00Z" \
+    --time_range 14 \
+    --eu_token "<EU_TOKEN>" \
+    --na_token "<NA_TOKEN>" \
+    --customers_file "/app/customers.yaml" \
+    --page_title "Logz.io Metrics" \
+    --confluence_username "<CONFLUENCE_USERNAME>" \
+    --confluence_password "<CONFLUENCE_PASSWORD>"
+```
 
 ---
 
-## Example Pipeline Parameters
+### 3. **Run with Docker Compose**
 
-| Parameter                 | Value             | Description                                                     |
-|---------------------------|-------------------|-----------------------------------------------------------------|
-| `PLATFORM`                | `Production`      | The platform for querying and collecting metrics.               |
-| `DATE`                    | `2025-01-26`      | Base date for querying logs.                                    |
-| `START_TIME`              | `08:00:00Z`       | Start time in UTC.                                              |
-| `END_TIME`                | `10:00:00Z`       | End time in UTC.                                                |
-| `TIME_RANGE`              | `14`              | Number of days before and after the base date.                  |
-| `CONFLUENCE_PAGE`         | `Logz.io Metrics` | The Confluence page name.                                       |
-| `CHECKOUT_OAS_DEPLOYMENT` | `false`           | Select to checkout oas-deployment repository for customers.yml. |
----
-
-## Output
-At the end of the pipeline (or after running the script locally), an `output.csv` file is generated. This CSV contains:
-- Log details based on the queried parameters.
-- Data organized for further analysis and reporting.
-
-For Jenkins jobs, the file is archived as a build artifact and can be downloaded directly from the Jenkins interface.
-
----
-
-## Troubleshooting
-
-### Common Errors:
-1. **Error: Unable to Locate customers.yml**:
-   - Ensure `customers.yml` is available in this directory or under the specified `oas-deployment` directory, if CHECKOUT_OAS_DEPLOYMENT option is selected.
-   - Check the sparse checkout configuration in the pipeline or your local setup, if CHECKOUT_OAS_DEPLOYMENT option is selected.
-
-2. **Python Errors During Script Execution**:
-   - Ensure all required dependencies are installed using `pip install -r requirements.txt`.
-   - Activate the virtual environment before running the script.
-
-3. **Jenkins Credential Errors**:
-   - Verify that the tokens (`Logzio_EU01_Token_SearchAPI` and `Logzio_NA01_Token_SearchAPI`) are correctly configured in Jenkins credentials and accessible by the pipeline.
-
----
-
-## Contributing
-If you'd like to contribute:
-1. Fork the repository.
-2. Create a feature branch:
-   ```bash
-   git checkout -b feature/your-feature
+#### Set Up the Environment Variables:
+1. Create a `.env` file in the repository root to define environment-specific variables required by Docker Compose.
+   
+   Example `.env` file:
+   ```properties
+   EU_API_TOKEN=your-eu-logz-token
+   NA_API_TOKEN=your-na-logz-token
+   CONFLUENCE_PASSWORD=your-confluence-password
    ```
-3. Commit your changes and push:
-   ```bash
-   git commit -m "Add your changes"
-   git push origin feature/your-feature
-   ```
-4. Open a pull request!
+
+   > **NOTE**: Do not commit the `.env` file, as it contains sensitive credentials.
+
+2. You can use the provided `.env.example` file as a template for creating your `.env`.
+
+#### Run the Application with Docker Compose:
+```bash
+docker compose up --build
+```
+
+This command will:
+- Build the Docker image using the `Dockerfile`.
+- Map environment variables from the `.env` file.
+- Run the script with the specified parameters in the `docker-compose.yml` file.
+
+#### Stopping the Service:
+To stop the running container:
+```bash
+docker compose down
+```
+
+#### Customizing Docker Compose Command:
+You can modify parameters in `docker-compose.yml` under the `command` field if needed, or pass arguments via environment variables.
+
+---
+
+### 4. **Run via Jenkins Pipeline**
+
+#### Pipeline Overview:
+The `Jenkinsfile` automates:
+- Repository checkout (and optionally `oas-deployment` for `customers.yml`).
+- Running the script with runtime parameters provided in the pipeline input.
+- Capturing and archiving the output file (`output.csv`).
+
+#### Trigger the Pipeline:
+Provide the following parameters during pipeline execution:
+
+| Parameter                 | Description                                                               |
+|---------------------------|---------------------------------------------------------------------------|
+| `PLATFORM`                | Target platform for queries (`prd` or `stg`).                             |
+| `DATE`                    | Base date (`YYYY-MM-DD`).                                                 |
+| `START_TIME`, `END_TIME`  | Start and End time in the format `HH:mm:ssZ` (UTC).                       |
+| `TIME_RANGE`              | Time range for date-based processing.                                     |
+| `CONFLUENCE_PAGE`         | Title of the page to create on Confluence.                                |
+| `CHECKOUT_OAS_DEPLOYMENT` | Boolean flag to fetch the `customers.yml` file from `oas-deployment`.     |
+
+The pipeline will automatically save the results (`output.csv`) as build artifacts.
+
+---
+
+## Common Errors and Troubleshooting
+
+#### 1. Script Errors:
+- **Error**: `FileNotFoundError: customers.yml not found`
+  - Ensure the correct path to the `customers.yml` file is specified via `--customers_file`.
+
+- **Error**: `Invalid API Token`
+  - Check that the tokens provided for `EU` or `NA` are correct and have the required access.
+
+#### 2. Docker Errors:
+- **Error**: `Environment variable not defined`
+  - Ensure all required keys are present in the `.env` file.
+
+#### 3. Jenkins Pipeline Failures:
+- **Error**: `Checkout failed for oas-deployment`
+  - Verify the Jenkins job has access to the required Git repository.
 
 ---

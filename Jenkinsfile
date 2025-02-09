@@ -129,7 +129,7 @@ pipeline {
                             --customers_file "${customersFile}" \
                             --page_title "${CONFLUENCE_PAGE}" \
                             --confluence_username "${confluenceUser}" \
-                            --confluence_api_token "${confluencePassword}"
+                            --confluence_password "${confluencePassword}"
                         """
                     }
                 }

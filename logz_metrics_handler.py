@@ -227,8 +227,8 @@ def process_date_task(
             total_requests = execute_query(environment, query_set[0], eu_token, na_token)
             failed_requests = execute_query(environment, query_set[1], eu_token, na_token)
 
-            print(f"[INFO] Namespace: {namespace} on {date} during {start_time.split("T")[1]} - "
-                  f"{end_time.split("T")[1]}, Total: {total_requests}, Failed: {failed_requests}.")
+            print(f"[INFO] Namespace: {namespace} on {date} during {start_time.split('T')[1]} - "
+                  f"{end_time.split('T')[1]}, Total: {total_requests}, Failed: {failed_requests}.")
             results[namespace] = (total_requests, failed_requests)
 
         date_results[environment] = results
@@ -257,8 +257,8 @@ def log_results_and_export_to_csv(
             start_time, end_time = next(
                 ((start, end) for d, start, end in date_ranges if d == date), (None, None))
 
-            print(f"\n========== Results for date: {date} ({start_time.split("T")[1]} {end_time.split("T")[1]}) ==========\n")
-            csv_writer.writerow([f"Results for date: {date} ({start_time.split("T")[1]} {end_time.split("T")[1]})"])
+            print(f"\n========== Results for date: {date} ({start_time.split('T')[1]} {end_time.split('T')[1]}) ==========\n")
+            csv_writer.writerow([f"Results for date: {date} ({start_time.split('T')[1]} {end_time.split('T')[1]})"])
 
             for environment, env_results in environments.items():
                 print(f"--- Results for environment: {environment} ---\n")
@@ -295,7 +295,7 @@ def log_results_and_export_to_csv(
 
 
 def create_confluence_page(
-        confluence_url: str, username: str, api_token: str,
+        confluence_url: str, username: str, password: str,
         space_key: str, page_title: str,
         findings: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]],
         date_ranges: List[Tuple[str, str, str]]
@@ -306,14 +306,14 @@ def create_confluence_page(
     Args:
         confluence_url (str): Base URL of the Confluence server.
         username (str): Username to authenticate with Confluence.
-        api_token (str): API token or password for authentication.
+        password (str): API token or password for authentication.
         space_key (str): Confluence space key.
         page_title (str): Title of the new Confluence page.
         findings (Dict): Results grouped by date and environment.
         date_ranges (List[Tuple[str, str, str]]): List of tuples with date, start, and end times.
     """
     try:
-        confluence = Confluence(url=confluence_url, username=username, password=api_token)
+        confluence = Confluence(url=confluence_url, username=username, password=password)
 
         content = f"<h1>{page_title}</h1>"
 
@@ -322,7 +322,7 @@ def create_confluence_page(
                 ((start, end) for d, start, end in date_ranges if d == date), (None, None)
             )
 
-            content += f"<h2>Results for {date} ({start_time.split("T")[1]} to {end_time.split("T")[1]})</h2>"
+            content += f"<h2>Results for {date} ({start_time.split('T')[1]} to {end_time.split('T')[1]})</h2>"
 
             # Side-by-side display for environments
             content += "<table style='width: 100%; table-layout: fixed;'><thead><tr>"
@@ -405,7 +405,7 @@ if __name__ == "__main__":
     parser.add_argument('--csv_filename', default=DEFAULT_CSV_FILENAME, help="Output CSV filename.")
     parser.add_argument('--confluence_url', required=True, help="Confluence base URL.")
     parser.add_argument('--confluence_username', required=True, help="Confluence username (or email).")
-    parser.add_argument('--confluence_api_token', required=True, help="Confluence API token.")
+    parser.add_argument('--confluence_password', required=True, help="Confluence password.")
     parser.add_argument('--space_key', required=True, help="Confluence space key.")
     parser.add_argument('--page_title', required=True, help="Title for the Confluence page.")
 
@@ -442,7 +442,7 @@ if __name__ == "__main__":
         create_confluence_page(
             confluence_url=args.confluence_url,
             username=args.confluence_username,
-            api_token=args.confluence_api_token,
+            password=args.confluence_password,
             space_key=args.space_key,
             page_title=args.page_title,
             findings=all_date_results,
