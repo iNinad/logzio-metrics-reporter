@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta
 from multiprocessing import Pool
 from pydoc import html
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Union
 
 import requests
 import yaml
@@ -192,34 +192,20 @@ def query_osra_errors(
         "_source": {"includes": ["message", "tenant"]}
     }
 
-    try:
-        url = get_url(environment)
-        headers = get_headers(eu_token if environment != NA_ENVIRONMENT else na_token)
+    # Use the execute_query function to get hits and error details
+    total_errors, error_details = execute_query(
+        environment=environment,
+        query=query_payload,
+        eu_token=eu_token,
+        na_token=na_token,
+        return_details=True
+    )
 
-        # Make the API request
-        response = requests.post(url, headers=headers, json=query_payload)
-        response.raise_for_status()  # Raise an error if the status code indicates a failure
-
-        response_data = response.json()
-        hits = response_data.get("hits", {})
-
-        total_errors = hits.get("total", 0)
-        error_details = [
-            {
-                "message": hit["_source"].get("message", ""),
-                "tenant": hit["_source"].get("tenant", "")
-            }
-            for hit in hits.get("hits", [])
-        ]
-
-        return total_errors, error_details
-    except Exception as e:
-        print(f"[ERROR] Failed to query OSRA errors: {e}")
-        return 0, []
+    return total_errors, error_details
 
 
-
-def execute_query(environment: str, query: Dict[str, Any], eu_token: str, na_token: str) -> int:
+def execute_query(environment: str, query: Dict[str, Any], eu_token: str, na_token: str,
+                  return_details: bool = False) -> Union[int, Tuple[int, List[Dict[str, str]]]]:
     """
     Execute a specific query against the Logz.io API with retry logic.
 
@@ -228,9 +214,11 @@ def execute_query(environment: str, query: Dict[str, Any], eu_token: str, na_tok
         query (Dict[str, Any]): Query payload for the API.
         eu_token (str): Logz.io API token for the EU region.
         na_token (str): Logz.io API token for the NA region.
+        return_details (bool): If True, also return details of hits (e.g., error messages and tenants).
 
     Returns:
-        int: Total number of hits for the query.
+        Union[int, Tuple[int, List[Dict[str, str]]]]: Either the total number of hits (if `return_details` is False) or a tuple
+        containing the total hits and a list of error details (if `return_details` is True).
     """
     url = get_url(environment)
     headers = get_headers(eu_token if environment != NA_ENVIRONMENT else na_token)
@@ -238,19 +226,37 @@ def execute_query(environment: str, query: Dict[str, Any], eu_token: str, na_tok
     retries = 0
     while retries < MAX_RETRIES:
         try:
-            response = requests.post(url, headers=headers, json=query)
+            response = requests.post(url, headers=headers, json=query, timeout=15)
             response.raise_for_status()  # Raise HTTPError for bad responses
-            return response.json().get("hits", {}).get("total", 0)
+
+            # Parse response data
+            response_data = response.json()
+            hits = response_data.get("hits", {})
+            total_hits = hits.get("total", 0)
+
+            if return_details:
+                error_details = [
+                    {
+                        "message": hit["_source"].get("message", ""),
+                        "tenant": hit["_source"].get("tenant", "")
+                    }
+                    for hit in hits.get("hits", [])
+                ]
+                return total_hits, error_details
+
+            return total_hits
+
         except (RequestException, HTTPError) as e:
             print(f"[ERROR] Query failed in {environment} (Retry {retries + 1}/{MAX_RETRIES}): {e}")
             retries += 1
             if retries == MAX_RETRIES:
                 print("[ERROR] Maximum retries reached.")
-                return 0
+                break
             print(f"[INFO] Retrying in {RETRY_BACKOFF_SECONDS} seconds...")
-            time.sleep(RETRY_BACKOFF_SECONDS)  # Backoff before the next retry
+            time.sleep(RETRY_BACKOFF_SECONDS)
 
-    return 0
+    # Return default values based on `return_details`
+    return (0, []) if return_details else 0
 
 
 def process_date_task(
@@ -446,9 +452,10 @@ def create_confluence_page(
         if existing_page:
             page_id = existing_page['id']
             confluence.update_page(page_id=page_id, title=page_title, body=content)
+            print("[INFO] Confluence page updated successfully!")
         else:
             confluence.create_page(space=space_key, title=page_title, body=content)
-        print("[INFO] Confluence page created successfully!")
+            print("[INFO] Confluence page created successfully!")
     except RequestException as e:
         print(f"[ERROR] Confluence connection issue: {e}")
 
