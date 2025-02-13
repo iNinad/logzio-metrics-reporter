@@ -3,6 +3,7 @@ import csv
 import time
 from datetime import datetime, timedelta
 from multiprocessing import Pool
+from pydoc import html
 from typing import List, Tuple, Dict, Any
 
 import requests
@@ -152,6 +153,72 @@ def build_queries(namespace_lists: Dict[str, List[str]], start_time: str, end_ti
     }
 
 
+def query_osra_errors(
+        environment: str,
+        start_time: str,
+        end_time: str,
+        eu_token: str,
+        na_token: str
+) -> Tuple[int, List[Dict[str, str]]]:
+    """
+    Query OSRA DataCollector errors from Logz.io for the given time range.
+
+    Args:
+        environment (str): Target environment (e.g., 'eu01-prd' or 'na01-prd').
+        start_time (str): The start time of the query in ISO8601 format.
+        end_time (str): The end time of the query in ISO8601 format.
+        eu_token (str): API token for the EU region.
+        na_token (str): API token for the NA region.
+
+    Returns:
+        Tuple[int, List[Dict[str, str]]]: Total number of errors and a list of error details (message and tenant).
+    """
+    query_payload = {
+        "query": {
+            "bool": {
+                "must": [
+                    {"range": {"@timestamp": {"gte": start_time, "lte": end_time}}},
+                    {"query_string": {"query": (
+                        'NOT "Unable to deserialize the fingerprint JSON into ADDENDUM_XML" '
+                        'AND NOT "Response status code does not indicate success: 404" '
+                        'AND NOT "Response status code does not indicate success: 502"'
+                    )}},
+                    {"term": {"kubernetes.container.name": "osra-datacollector"}},
+                    {"term": {"ospn_solution": "ra"}},
+                    {"term": {"level": "ERROR"}}
+                ]
+            }
+        },
+        "_source": {"includes": ["message", "tenant"]}
+    }
+
+    try:
+        url = get_url(environment)
+        headers = get_headers(eu_token if environment != NA_ENVIRONMENT else na_token)
+
+        # Make the API request
+        response = requests.post(url, headers=headers, json=query_payload)
+        response.raise_for_status()  # Raise an error if the status code indicates a failure
+
+        response_data = response.json()
+        hits = response_data.get("hits", {})
+
+        total_errors = hits.get("total", 0)
+        error_details = [
+            {
+                "message": hit["_source"].get("message", ""),
+                "tenant": hit["_source"].get("tenant", "")
+            }
+            for hit in hits.get("hits", [])
+        ]
+
+        return total_errors, error_details
+    except Exception as e:
+        print(f"[ERROR] Failed to query OSRA errors: {e}")
+        return 0, []
+
+
+
 def execute_query(environment: str, query: Dict[str, Any], eu_token: str, na_token: str) -> int:
     """
     Execute a specific query against the Logz.io API with retry logic.
@@ -298,6 +365,7 @@ def create_confluence_page(
         confluence_url: str, username: str, password: str,
         space_key: str, page_title: str,
         findings: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]],
+        osra_errors: Dict[str, Tuple[int, List[Dict[str, str]]]],
         date_ranges: List[Tuple[str, str, str]]
 ) -> None:
     """
@@ -310,6 +378,7 @@ def create_confluence_page(
         space_key (str): Confluence space key.
         page_title (str): Title of the new Confluence page.
         findings (Dict): Results grouped by date and environment.
+        osra_errors (Dict): OSRA DataCollector errors by date.
         date_ranges (List[Tuple[str, str, str]]): List of tuples with date, start, and end times.
     """
     try:
@@ -351,6 +420,26 @@ def create_confluence_page(
 
                 content += "</tbody></table></td>"
             content += "</tr></tbody></table>"
+
+        # Add OSRA DataCollector errors
+        content += "<h2>OSRA DataCollector</h2>"
+        for date, (total, error_details) in osra_errors.items():
+            content += f"<h3>Date: {date}</h3>"
+            content += f"<p>Total Errors: {total}</p>"
+            # Only create the table if there are errors
+            if total > 0:
+                content += "<table style='width: 100%; border: 1px solid black;'>"
+                content += "<thead><tr><th>Tenant</th><th>Message</th></tr></thead><tbody>"
+
+                for item in error_details:
+                    tenant = item['tenant']
+                    # Truncate the message to 200 characters
+                    message = item['message'][:500]+'...' if len(item['message']) > 200 else item['message']
+                    message = message.replace("\n", " ").replace("\r", "")
+                    message = html.escape(message) # Strip out any line breaks
+                    content += f"<tr><td>{tenant}</td><td>{message}</td></tr>"
+
+                content += "</tbody></table>"
 
         existing_page = confluence.get_page_by_title(space=space_key, title=page_title)
 
@@ -434,6 +523,16 @@ if __name__ == "__main__":
 
         print("[INFO] Batch processing completed.")
 
+        osra_total_errors, osra_error_details = query_osra_errors(
+            environment=args.platform,
+            start_time=f"{args.date}T{args.start_time}",
+            end_time=f"{args.date}T{args.end_time}",
+            eu_token=args.eu_token,
+            na_token=args.na_token
+        )
+
+        osra_results = {args.date: (osra_total_errors, osra_error_details)}
+
         # Save results to CSV
         log_results_and_export_to_csv(all_date_results, date_ranges, args.csv_filename)
 
@@ -446,6 +545,7 @@ if __name__ == "__main__":
             space_key=args.space_key,
             page_title=args.page_title,
             findings=all_date_results,
+            osra_errors=osra_results,
             date_ranges=date_ranges
         )
 
