@@ -8,6 +8,8 @@ from typing import List, Tuple, Dict, Any, Union
 
 import requests
 import yaml
+import json
+import os
 from atlassian import Confluence
 from requests.exceptions import RequestException, HTTPError
 from tabulate import tabulate
@@ -61,6 +63,45 @@ def get_url(environment: str) -> str:
     return BASE_API_URL_NA if environment == NA_ENVIRONMENT else BASE_API_URL_EU
 
 
+def load_query_config(config_file_path: str) -> Dict[str, Any]:
+    """
+    Load queries from an external JSON configuration file.
+
+    Args:
+        config_file_path (str): Path to the configuration JSON file.
+
+    Returns:
+        Dict[str, Any]: The loaded query configurations.
+    """
+    with open(config_file_path, "r") as file:
+        return json.load(file)
+
+
+
+def replace_placeholders(query: Dict[str, Any], start_time: str, end_time: str, namespace: str,
+                         tenant: str) -> Dict[str, Any]:
+    """
+    Replace placeholders in the query template with actual values.
+
+    Args:
+        query (Dict[str, Any]): Query template with placeholders.
+        start_time (str): Query start time (ISO8601 format).
+        end_time (str): Query end time (ISO8601 format).
+        namespace (str): Namespace to include in the query.
+        tenant (str): tenant for the query.
+
+    Returns:
+        Dict[str, Any]: The updated query with placeholders replaced.
+    """
+    query_str = json.dumps(query)  # Convert query dictionary to a string
+    updated_query_str = query_str.replace("PLACEHOLDER_START_TIME", start_time)
+    updated_query_str = updated_query_str.replace("PLACEHOLDER_END_TIME", end_time)
+    updated_query_str = updated_query_str.replace("PLACEHOLDER_NAMESPACE", f"{namespace}")
+    updated_query_str = updated_query_str.replace("PLACEHOLDER_TENANT", tenant)
+    return json.loads(updated_query_str)  # Convert string back to a dictionary
+
+
+
 # ==========================
 # Core Utility Functions
 # ==========================
@@ -102,7 +143,8 @@ def fetch_namespaces(customers_file: str, platform_prefix: str) -> Dict[str, Lis
 def build_oca_queries(namespace_lists: Dict[str, List[str]], start_time: str, end_time: str, platform_prefix: str) \
         -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
     """
-    Build search queries for all requests and failed requests for each namespace.
+    Build search queries for all requests and failed requests for each namespace
+    using external query configurations.
 
     Args:
         namespace_lists (Dict[str, List[str]]): Namespaces grouped by environment.
@@ -113,42 +155,25 @@ def build_oca_queries(namespace_lists: Dict[str, List[str]], start_time: str, en
     Returns:
         Dict[str, Dict[str, List[Dict[str, Any]]]]: Nested dictionary of queries (by environment and namespace).
     """
+    # Load query configuration from a JSON file
+    config_file_path = os.path.join(os.path.dirname(__file__), "queries_config.json")
+    query_config = load_query_config(config_file_path)
+
+    # Namespace prefix (used for formatting the namespace field)
+    namespace_name = f"{NAMESPACE_PREFIX.format(platform_prefix=platform_prefix)}ws"
+
+    # Prepare the actual queries, grouped by environment and namespace
     return {
         environment: {
-            namespace: [
-                # Query for total requests
-                {
-                    "query": {
-                        "bool": {
-                            "must": [
-                                {"range": {"@timestamp": {"gte": start_time, "lte": end_time}}},
-                                {"term": {
-                                    "kubernetes.namespace_name": f"{NAMESPACE_PREFIX.format(platform_prefix=platform_prefix)}ws"}},
-                                {"exists": {"field": "upstream_status"}},
-                                {"term": {"tenant": namespace}}
-                            ]
-                        }
-                    },
-                    "size": 0
-                },
-                # Query for failed requests
-                {
-                    "query": {
-                        "bool": {
-                            "must": [
-                                {"range": {"@timestamp": {"gte": start_time, "lte": end_time}}},
-                                {"term": {
-                                    "kubernetes.namespace_name": f"{NAMESPACE_PREFIX.format(platform_prefix=platform_prefix)}ws"}},
-                                {"exists": {"field": "upstream_status"}},
-                                {"term": {"tenant": namespace}},
-                                {"range": {"upstream_status": {"gte": 500, "lte": 599}}}
-                            ]
-                        }
-                    },
-                    "size": 0
-                }
+            tenant: [
+                # Total requests query
+                replace_placeholders(query_config["oca_queries"]["total_requests"], start_time, end_time, namespace_name,
+                                     tenant),
+                # Failed requests query
+                replace_placeholders(query_config["oca_queries"]["failed_requests"], start_time, end_time, namespace_name,
+                                     tenant)
             ]
-            for namespace in namespaces
+            for tenant in namespaces
         }
         for environment, namespaces in namespace_lists.items()
     }
@@ -212,29 +237,17 @@ def query_osra_errors(
     Returns:
         Tuple[int, List[Dict[str, str]]]: Total number of errors and a list of error details (message and tenant).
     """
-    query_payload = {
-        "query": {
-            "bool": {
-                "must": [
-                    {"range": {"@timestamp": {"gte": start_time, "lte": end_time}}},
-                    {"query_string": {"query": (
-                        'NOT "Unable to deserialize the fingerprint JSON into ADDENDUM_XML" '
-                        'AND NOT "Response status code does not indicate success: 404" '
-                        'AND NOT "Response status code does not indicate success: 502"'
-                    )}},
-                    {"term": {"kubernetes.container.name": "osra-datacollector"}},
-                    {"term": {"ospn_solution": "ra"}},
-                    {"term": {"level": "ERROR"}}
-                ]
-            }
-        },
-        "_source": {"includes": ["message", "tenant"]}
-    }
+    # Load query configuration from a JSON file
+    config_file_path = os.path.join(os.path.dirname(__file__), "queries_config.json")
+    query_config = load_query_config(config_file_path)
+
+    # Replace placeholders in the query
+    osra_error_query = replace_placeholders(query_config["osra_error_query"], start_time, end_time, "", "")
 
     # Use the execute_query function to get hits and error details
     total_errors, error_details = execute_query(
         environment=environment,
-        query=query_payload,
+        query=osra_error_query,
         eu_token=eu_token,
         na_token=na_token,
         return_details=True
@@ -478,7 +491,7 @@ def process_date_task(
             total_requests = execute_query(environment, query_set[0], eu_token, na_token)
             failed_requests = execute_query(environment, query_set[1], eu_token, na_token)
 
-            print(f"[INFO] Namespace: {namespace} on {date} during {start_time.split('T')[1]} - "
+            print(f"[INFO] Tenant: {namespace} on {date} during {start_time.split('T')[1]} - "
                   f"{end_time.split('T')[1]}, Total: {total_requests}, Failed: {failed_requests}.")
             results[namespace] = (total_requests, failed_requests)
 
