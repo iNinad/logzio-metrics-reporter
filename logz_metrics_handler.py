@@ -159,33 +159,88 @@ def build_oca_queries(namespace_lists: Dict[str, List[str]], start_time: str, en
 
     Returns:
         Dict[str, Dict[str, List[Dict[str, Any]]]]: Nested dictionary of queries (by environment and namespace).
+
+    Raises:
+        FileNotFoundError: If the configuration file is missing.
+        KeyError: If required keys are missing in the JSON configuration.
+        ValueError: If the query construction has mismatches or failures.
     """
-    # Load query configuration from a JSON file
-    config_file_path = os.path.join(os.path.dirname(__file__), "queries_config.json")
-    query_config = load_query_config(config_file_path)
+    try:
+        # Load query configuration from a JSON file
+        config_file_path = os.path.join(os.path.dirname(__file__), "queries_config.json")
 
-    # Namespace prefix (used for formatting the namespace field)
-    namespace_name = f"{NAMESPACE_PREFIX.format(platform_prefix=platform_prefix)}ws"
+        if not os.path.exists(config_file_path):
+            raise FileNotFoundError(f"Configuration file not found at {config_file_path}")
 
-    # Prepare the actual queries, grouped by environment and namespace
-    return {
-        environment: {
-            tenant: [
-                # Total requests query
-                replace_placeholders(query_config["oca_queries"]["total_requests"], start_time, end_time, namespace=namespace_name,
-                                     tenant=tenant),
-                # Failed requests query
-                replace_placeholders(query_config["oca_queries"]["failed_requests"], start_time, end_time, namespace=namespace_name,
-                                     tenant=tenant)
-            ]
-            for tenant in namespaces
-        }
-        for environment, namespaces in namespace_lists.items()
-    }
+        query_config = load_query_config(config_file_path)
+
+    except FileNotFoundError as fnf_error:
+        raise FileNotFoundError(f"Error loading configuration file: {fnf_error}")
+    except json.JSONDecodeError as jde_error:
+        raise ValueError(f"Configuration file is not a valid JSON format: {jde_error}")
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error while loading query configuration: {str(e)}")
+
+    try:
+        # Namespace prefix (used for formatting the namespace field)
+        namespace_name = f"{NAMESPACE_PREFIX.format(platform_prefix=platform_prefix)}ws"
+
+        # Validate query configuration
+        if "oca_queries" not in query_config:
+            raise KeyError("Missing 'oca_queries' section in query configuration")
+        if "total_requests" not in query_config["oca_queries"]:
+            raise KeyError("Missing 'total_requests' query in 'oca_queries'")
+        if "failed_requests" not in query_config["oca_queries"]:
+            raise KeyError("Missing 'failed_requests' query in 'oca_queries'")
+
+        # Prepare the actual queries, grouped by environment and namespace
+        results = {}
+        for environment, namespaces in namespace_lists.items():
+            if not isinstance(namespaces, list):
+                raise ValueError(f"Namespaces for environment '{environment}' should be a list")
+
+            results[environment] = {}
+            for tenant in namespaces:
+                try:
+                    # Total requests query
+                    total_requests_query = replace_placeholders(
+                        query_config["oca_queries"]["total_requests"],
+                        start_time=start_time,
+                        end_time=end_time,
+                        namespace=namespace_name,
+                        tenant=tenant
+                    )
+
+                    # Failed requests query
+                    failed_requests_query = replace_placeholders(
+                        query_config["oca_queries"]["failed_requests"],
+                        start_time=start_time,
+                        end_time=end_time,
+                        namespace=namespace_name,
+                        tenant=tenant
+                    )
+
+                    results[environment][tenant] = [total_requests_query, failed_requests_query]
+
+                except KeyError as ke:
+                    raise KeyError(
+                        f"Failed to replace placeholders for tenant '{tenant}' in environment '{environment}': {ke}")
+                except Exception as e:
+                    raise ValueError(
+                        f"Error occurred while building query for tenant '{tenant}' in environment '{environment}': {str(e)}")
+
+        return results
+
+    except KeyError as ke:
+        raise KeyError(f"Key error encountered in query configuration or namespace lists: {ke}")
+    except ValueError as ve:
+        raise ValueError(f"Invalid input or query construction error: {ve}")
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error while building OCA queries: {str(e)}")
 
 
-def build_request_distribution_queries(platform_prefix: str, start_time: str, end_time: str) -> Dict[
-    str, Any]:
+
+def build_request_distribution_queries(platform_prefix: str, start_time: str, end_time: str) -> Dict[str, Any]:
     """
     Build queries for request distribution with specific time ranges and response codes
     using external query configurations.
@@ -197,49 +252,83 @@ def build_request_distribution_queries(platform_prefix: str, start_time: str, en
 
     Returns:
         Dict[str, Any]: Queries for response codes and total requests.
+
+    Raises:
+        FileNotFoundError: If the configuration file is missing.
+        KeyError: If required keys are missing in the JSON configuration.
+        ValueError: If a query cannot be successfully built.
     """
-    # Load the query configuration from an external JSON file
-    config_file_path = os.path.join(os.path.dirname(__file__), "queries_config.json")
-    query_config = load_query_config(config_file_path)
+    try:
+        # Load the query configuration from an external JSON file
+        config_file_path = os.path.join(os.path.dirname(__file__), "queries_config.json")
 
-    # Namespace name (formatted from platform prefix)
-    namespace_name = f"tid-{platform_prefix}-ws"
+        if not os.path.exists(config_file_path):
+            raise FileNotFoundError(f"Configuration file not found at {config_file_path}")
 
-    # Prepare queries for each response code
-    queries = {}
-    for response_code in RESPONSE_CODES + ["total"]:
-        base_query = query_config["request_distribution_query"]  # Load the base query template
-        # Get the additional logic for response code conditions
-        if response_code == "total":
-            additional_condition = \
+        query_config = load_query_config(config_file_path)
+
+    except FileNotFoundError as fnf_error:
+        raise FileNotFoundError(f"Error loading configuration file: {fnf_error}")
+    except json.JSONDecodeError as jde_error:
+        raise ValueError(f"Configuration file is not a valid JSON format: {jde_error}")
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error occurred while loading query configuration: {str(e)}")
+
+    try:
+        # Namespace name (formatted from platform prefix)
+        namespace_name = f"tid-{platform_prefix}-ws"
+
+        # Prepare queries for each response code
+        queries = {}
+        for response_code in RESPONSE_CODES + ["total"]:
+            base_query = query_config["request_distribution_query"]  # Load the base query template
+
+            # Get the additional logic for response code conditions
+            if response_code == "total":
+                additional_condition = \
                 query_config["request_distribution_query"]["additional_logic"]["response_code_condition"]["total"]
-        else:
-            additional_condition = \
+            else:
+                additional_condition = \
                 query_config["request_distribution_query"]["additional_logic"]["response_code_condition"]["specific"]
 
-        # Safely extract "bool" and "must" from the base query
-        base_bool = base_query["query"].get("bool", {})
-        base_must = base_bool.get("must", [])
+            # Safely extract "bool" and "must" from the base query
+            base_bool = base_query.get("query", {}).get("bool", {})
+            if not base_bool:
+                raise KeyError(f"Missing 'bool' in base query for response code: {response_code}")
 
-        # Combine the "must" condition with the additional logic
-        base_query_with_condition = {
-            "query": {
-                "bool": {
-                    "must": base_must + [additional_condition]  # Merge "must" conditions
+            base_must = base_bool.get("must", [])
+            if not isinstance(base_must, list):
+                raise ValueError(f"Invalid format for 'must' in base query for response code: {response_code}")
+
+            # Combine the "must" condition with the additional logic
+            base_query_with_condition = {
+                "query": {
+                    "bool": {
+                        "must": base_must + [additional_condition]  # Merge "must" conditions
+                    }
                 }
             }
-        }
 
-        queries[response_code] = replace_placeholders(
-                base_query_with_condition,
-                start_time=start_time,
-                end_time=end_time,
-                namespace=namespace_name,
-                response_code=response_code
-            )
+            # Attempt to replace placeholders and validate the query
+            try:
+                queries[response_code] = replace_placeholders(
+                    base_query_with_condition,
+                    start_time=start_time,
+                    end_time=end_time,
+                    namespace=namespace_name,
+                    response_code=response_code
+                )
+            except Exception as replace_error:
+                raise ValueError(f"Error replacing placeholders for response code {response_code}: {replace_error}")
 
-    return queries
+        return queries
 
+    except KeyError as ke:
+        raise KeyError(f"Missing required keys in query configuration: {ke}")
+    except ValueError as ve:
+        raise ValueError(f"Validation error occurred while building queries: {ve}")
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error occurred while building queries: {str(e)}")
 
 
 def query_osra_errors(
@@ -261,24 +350,63 @@ def query_osra_errors(
 
     Returns:
         Tuple[int, List[Dict[str, str]]]: Total number of errors and a list of error details (message and tenant).
+
+    Raises:
+        FileNotFoundError: If the query configuration file does not exist.
+        KeyError: If required keys are missing from the query configuration.
+        ValueError: If there is an error during query construction.
+        RuntimeError: If the query execution fails.
     """
-    # Load query configuration from a JSON file
-    config_file_path = os.path.join(os.path.dirname(__file__), "queries_config.json")
-    query_config = load_query_config(config_file_path)
+    try:
+        # Load query configuration from a JSON file
+        config_file_path = os.path.join(os.path.dirname(__file__), "queries_config.json")
 
-    # Replace placeholders in the query
-    osra_error_query = replace_placeholders(query_config["osra_error_query"], start_time, end_time, "")
+        if not os.path.exists(config_file_path):
+            raise FileNotFoundError(f"Configuration file not found at {config_file_path}")
 
-    # Use the execute_query function to get hits and error details
-    total_errors, error_details = execute_query(
-        environment=environment,
-        query=osra_error_query,
-        eu_token=eu_token,
-        na_token=na_token,
-        return_details=True
-    )
+        query_config = load_query_config(config_file_path)
 
-    return total_errors, error_details
+    except FileNotFoundError as fnf_error:
+        raise FileNotFoundError(f"Error loading configuration file: {fnf_error}")
+    except json.JSONDecodeError as jde_error:
+        raise ValueError(f"Configuration file is not a valid JSON format: {jde_error}")
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error while loading query configuration: {str(e)}")
+
+    try:
+        # Validate the existence of "osra_error_query" in the query configuration
+        if "osra_error_query" not in query_config:
+            raise KeyError("Missing 'osra_error_query' in query configuration")
+
+        # Replace placeholders in the query
+        osra_error_query = replace_placeholders(
+            query_config["osra_error_query"],
+            start_time=start_time,
+            end_time=end_time,
+            namespace=""  # No namespace is needed here
+        )
+
+    except KeyError as ke:
+        raise KeyError(f"Key error during placeholder replacement: {ke}")
+    except ValueError as ve:
+        raise ValueError(f"Error replacing placeholders in 'osra_error_query': {ve}")
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error while constructing OSRA error query: {str(e)}")
+
+    try:
+        # Execute the query to fetch hits and error details
+        total_errors, error_details = execute_query(
+            environment=environment,
+            query=osra_error_query,
+            eu_token=eu_token,
+            na_token=na_token,
+            return_details=True
+        )
+
+        return total_errors, error_details
+
+    except Exception as e:
+        raise RuntimeError(f"Query execution failed for environment '{environment}': {str(e)}")
 
 
 def fetch_request_distribution(
