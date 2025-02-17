@@ -70,5 +70,22 @@
         "specific": { "term": { "upstream_status": "PLACEHOLDER_RESPONSE_CODE" } }
       }
     }
+  },
+  "soap_requests_query": {
+    "query": {
+      "bool": {
+        "must": [
+          { "range": { "@timestamp": { "gte": "PLACEHOLDER_START_TIME", "lte": "PLACEHOLDER_END_TIME" } } },
+          { "term": { "nginx.access.url": "/iassoap" } },
+          { "term": { "ospn_env": "PLACEHOLDER_PLATFORM" } }
+        ]
+      }
+    },
+    "additional_logic": {
+      "response_code_condition": {
+        "total": { "exists": { "field": "nginx.access.response_code" } },
+        "specific": { "term": { "nginx.access.response_code": "PLACEHOLDER_RESPONSE_CODE" } }
+      }
+    }
   }
 }

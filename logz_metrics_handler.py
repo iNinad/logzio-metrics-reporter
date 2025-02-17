@@ -78,9 +78,8 @@ def load_query_config(config_file_path: str) -> Dict[str, Any]:
         return json.load(file)
 
 
-
 def replace_placeholders(query: Dict[str, Any], start_time: str, end_time: str, namespace: str = None,
-                         tenant: str = None, response_code: str = None) -> Dict[str, Any]:
+                         tenant: str = None, response_code: str = None, platform: str = None) -> Dict[str, Any]:
     """
     Replace placeholders in the query template with actual values.
 
@@ -91,6 +90,7 @@ def replace_placeholders(query: Dict[str, Any], start_time: str, end_time: str, 
         namespace (str): Namespace to include in the query.
         tenant (str): tenant for the query.
         response_code (str): status code for the HTTP request.
+        platform (str): platform for the query.
 
     Returns:
         Dict[str, Any]: The updated query with placeholders replaced.
@@ -104,8 +104,9 @@ def replace_placeholders(query: Dict[str, Any], start_time: str, end_time: str, 
         updated_query_str = updated_query_str.replace("PLACEHOLDER_TENANT", tenant)
     if response_code:
         updated_query_str = updated_query_str.replace("PLACEHOLDER_RESPONSE_CODE", response_code)
+    if platform:
+        updated_query_str = updated_query_str.replace("PLACEHOLDER_PLATFORM", platform)
     return json.loads(updated_query_str)  # Convert string back to a dictionary
-
 
 
 # ==========================
@@ -240,8 +241,7 @@ def build_oca_queries(namespace_lists: Dict[str, List[str]], start_time: str, en
         raise RuntimeError(f"Unexpected error while building OCA queries: {str(e)}")
 
 
-
-def build_request_distribution_queries(platform_prefix: str, start_time: str, end_time: str) -> Dict[str, Any]:
+def build_request_queries(platform_prefix: str, start_time: str, end_time: str, section: str) -> Dict[str, Any]:
     """
     Build queries for request distribution with specific time ranges and response codes
     using external query configurations.
@@ -250,6 +250,7 @@ def build_request_distribution_queries(platform_prefix: str, start_time: str, en
         platform_prefix (str): Platform ("prd" or "stg").
         start_time (str): Start time in HH:mm:ssZ format.
         end_time (str): End time in HH:mm:ssZ format.
+        section (str): Section of the query configuration to use ("request_distribution_query" or "soap_requests_query").
 
     Returns:
         Dict[str, Any]: Queries for response codes and total requests.
@@ -282,15 +283,15 @@ def build_request_distribution_queries(platform_prefix: str, start_time: str, en
         # Prepare queries for each response code
         queries = {}
         for response_code in RESPONSE_CODES + ["total"]:
-            base_query = query_config["request_distribution_query"]  # Load the base query template
+            base_query = query_config[section]  # Load the base query template
 
             # Get the additional logic for response code conditions
             if response_code == "total":
                 additional_condition = \
-                query_config["request_distribution_query"]["additional_logic"]["response_code_condition"]["total"]
+                    query_config[section]["additional_logic"]["response_code_condition"]["total"]
             else:
                 additional_condition = \
-                query_config["request_distribution_query"]["additional_logic"]["response_code_condition"]["specific"]
+                    query_config[section]["additional_logic"]["response_code_condition"]["specific"]
 
             # Safely extract "bool" and "must" from the base query
             base_bool = base_query.get("query", {}).get("bool", {})
@@ -317,7 +318,8 @@ def build_request_distribution_queries(platform_prefix: str, start_time: str, en
                     start_time=start_time,
                     end_time=end_time,
                     namespace=namespace_name,
-                    response_code=response_code
+                    response_code=response_code,
+                    platform=platform_prefix
                 )
             except Exception as replace_error:
                 raise ValueError(f"Error replacing placeholders for response code {response_code}: {replace_error}")
@@ -415,7 +417,8 @@ def fetch_request_distribution(
         start_time: str,
         end_time: str,
         eu_token: str,
-        na_token: str
+        na_token: str,
+        section: str
 ) -> Dict[str, Dict[str, int]]:
     """
     Fetch request counts for a specific date and time range from both EU and NA environments.
@@ -426,12 +429,13 @@ def fetch_request_distribution(
         end_time (str): End time in HH:mm:ssZ format.
         eu_token (str): API token for EU cluster.
         na_token (str): API token for NA cluster.
+        section (str): Section of the query configuration to use ("request_distribution_query" or "soap_requests_query").
 
     Returns:
         Dict[str, Dict[str, int]]: Results grouped by response code, with counts for both EU and NA environments.
     """
     # Prepare queries
-    queries = build_request_distribution_queries(platform_prefix, start_time, end_time)
+    queries = build_request_queries(platform_prefix, start_time, end_time, section)
 
     # Initialize results in the desired format
     results = {code: {EU_ENVIRONMENT: 0, NA_ENVIRONMENT: 0} for code in RESPONSE_CODES + ["total"]}
@@ -459,15 +463,14 @@ def fetch_request_distribution(
     return results
 
 
-
-
-def generate_request_distribution_table(
+def generate_requests_distribution_table(
         platform_prefix: str,
         date: str,
         start_time: str,
         end_time: str,
         eu_token: str,
         na_token: str,
+        section: str,
         range_weeks: int = 1
 ) -> str:
     """
@@ -480,6 +483,7 @@ def generate_request_distribution_table(
         end_time (str): Query end time.
         eu_token (str): API token for EU cluster.
         na_token (str): API token for NA cluster.
+        section (str): Section of the query configuration to use ("request_distribution_query" or "soap_requests_query").
         range_weeks (int): Number of weeks before and after the given date to include in the table.
 
     Returns:
@@ -510,6 +514,7 @@ def generate_request_distribution_table(
             f"{query_date}T{end_time}",
             eu_token,
             na_token,
+            section
         )
         all_results[query_date] = results
 
@@ -686,7 +691,8 @@ def log_results_and_export_to_csv(
             start_time, end_time = next(
                 ((start, end) for d, start, end in date_ranges if d == date), (None, None))
 
-            print(f"\n========== Results for date: {date} ({start_time.split('T')[1]} {end_time.split('T')[1]}) ==========\n")
+            print(
+                f"\n========== Results for date: {date} ({start_time.split('T')[1]} {end_time.split('T')[1]}) ==========\n")
             csv_writer.writerow([f"Results for date: {date} ({start_time.split('T')[1]} {end_time.split('T')[1]})"])
 
             for environment, env_results in environments.items():
@@ -728,7 +734,8 @@ def create_confluence_page(
         space_key: str, page_title: str,
         findings: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]],
         osra_errors: Dict[str, Tuple[int, List[Dict[str, str]]]],
-        requests_results: str,
+        all_requests_results: str,
+        soap_requests_results: str,
         date_ranges: List[Tuple[str, str, str]]
 ) -> None:
     """
@@ -742,7 +749,8 @@ def create_confluence_page(
         page_title (str): Title of the new Confluence page.
         findings (Dict): Results grouped by date and environment.
         osra_errors (Dict): OSRA DataCollector errors by date.
-        requests_results (str): Request distribution table in HTML format.
+        all_requests_results (str): All requests table in HTML format.
+        soap_requests_results (str): Soap requests table in HTML format.
         date_ranges (List[Tuple[str, str, str]]): List of tuples with date, start, and end times.
     """
     try:
@@ -798,15 +806,18 @@ def create_confluence_page(
                 for item in error_details:
                     tenant = item['tenant']
                     # Truncate the message to 200 characters
-                    message = item['message'][:500]+'...' if len(item['message']) > 200 else item['message']
+                    message = item['message'][:500] + '...' if len(item['message']) > 200 else item['message']
                     message = message.replace("\n", " ").replace("\r", "")
-                    message = html.escape(message) # Strip out any line breaks
+                    message = html.escape(message)  # Strip out any line breaks
                     content += f"<tr><td>{tenant}</td><td>{message}</td></tr>"
 
                 content += "</tbody></table>"
 
-        content += "<h2>Request Distribution</h2>"
-        content += f"<p>{requests_results}</p>"
+        content += "<h2>All Requests Distribution</h2>"
+        content += f"<p>{all_requests_results}</p>"
+
+        content += "<h2>SOAP Requests Distribution</h2>"
+        content += f"<p>{soap_requests_results}</p>"
 
         existing_page = confluence.get_page_by_title(space=space_key, title=page_title)
 
@@ -820,10 +831,11 @@ def create_confluence_page(
             page_url = response.get('_links', {}).get('base') + response.get('_links', {}).get('webui', '')
             print(f"[INFO] Confluence page created successfully! URL: {page_url}")
     except RequestException as e:
-            print(f"[ERROR] Confluence connection issue: {e}")
+        print(f"[ERROR] Confluence connection issue: {e}")
 
 
-def generate_date_ranges(base_date: str, date_offset_range: int, start_time: str, end_time: str) -> List[Tuple[str, str, str]]:
+def generate_date_ranges(base_date: str, date_offset_range: int, start_time: str, end_time: str) -> List[
+    Tuple[str, str, str]]:
     """
     Generate a range of dates and their query periods.
 
@@ -879,7 +891,7 @@ if __name__ == "__main__":
         date_ranges = generate_date_ranges(args.date, args.date_offset_range, args.start_time, args.end_time)
 
         # Process all dates using multiprocessing
-        print("[INFO] Starting batch processing for all dates...")
+        print("[INFO] Starting batch processing for OCA queries...")
         all_date_results: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]] = {}
 
         with Pool() as pool:
@@ -891,8 +903,9 @@ if __name__ == "__main__":
             for date, date_results in pool.starmap(process_date_task, tasks):
                 all_date_results[date] = date_results
 
-        print("[INFO] Batch processing completed.")
+        print("[INFO] Batch processing completed for OCA queries.")
 
+        print("[INFO] Starting processing for OSRA queries...")
         osra_total_errors, osra_error_details = query_osra_errors(
             environment=args.platform,
             start_time=f"{args.date}T{args.start_time}",
@@ -902,9 +915,21 @@ if __name__ == "__main__":
         )
 
         osra_results = {args.date: (osra_total_errors, osra_error_details)}
+        print("[INFO] Processing completed for OSRA queries...")
 
+        print("[INFO] Starting processing for requests distribution queries...")
         # Generate HTML table
-        requests_table = generate_request_distribution_table(args.platform, args.date, args.start_time, args.end_time, args.eu_token, args.na_token)
+        all_requests_table = generate_requests_distribution_table(args.platform, args.date, args.start_time,
+                                                                  args.end_time, args.eu_token, args.na_token,
+                                                                  section="request_distribution_query")
+        print("[INFO] Processing completed for requests distribution queries...")
+
+        print("[INFO] Starting processing for SOAP requests queries...")
+        # Generate HTML table
+        soap_requests_table = generate_requests_distribution_table(args.platform, args.date, args.start_time,
+                                                                   args.end_time, args.eu_token, args.na_token,
+                                                                   section="soap_requests_query")
+        print("[INFO] Processing completed for SOAP requests queries...")
 
         # Save results to CSV
         log_results_and_export_to_csv(all_date_results, date_ranges, args.csv_filename)
@@ -919,7 +944,8 @@ if __name__ == "__main__":
             page_title=args.page_title,
             findings=all_date_results,
             osra_errors=osra_results,
-            requests_results=requests_table,
+            all_requests_results=all_requests_table,
+            soap_requests_results=soap_requests_table,
             date_ranges=date_ranges
         )
 
