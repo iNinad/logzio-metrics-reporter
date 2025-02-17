@@ -1,6 +1,9 @@
 import argparse
 import csv
+import json
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from multiprocessing import Pool
 from pydoc import html
@@ -8,8 +11,6 @@ from typing import List, Tuple, Dict, Any, Union
 
 import requests
 import yaml
-import json
-import os
 from atlassian import Confluence
 from requests.exceptions import RequestException, HTTPError
 from tabulate import tabulate
@@ -429,20 +430,34 @@ def fetch_request_distribution(
     Returns:
         Dict[str, Dict[str, int]]: Results grouped by response code, with counts for both EU and NA environments.
     """
+    # Prepare queries
     queries = build_request_distribution_queries(platform_prefix, start_time, end_time)
 
     # Initialize results in the desired format
     results = {code: {EU_ENVIRONMENT: 0, NA_ENVIRONMENT: 0} for code in RESPONSE_CODES + ["total"]}
 
-    # Execute queries for EU environment
-    for code, query in queries.items():
-        results[code][EU_ENVIRONMENT] = execute_query(EU_ENVIRONMENT, query, eu_token, na_token)
+    # Helper function to execute a query
+    def execute_task(environment, code, query, token):
+        return code, environment, execute_query(environment, query, token, na_token)
 
-    # Execute queries for NA environment
-    for code, query in queries.items():
-        results[code][NA_ENVIRONMENT] = execute_query(NA_ENVIRONMENT, query, eu_token, na_token)
+    # Use ThreadPoolExecutor for parallel execution
+    with ThreadPoolExecutor() as executor:
+        # Create futures for EU and NA queries
+        futures = [
+                      executor.submit(execute_task, EU_ENVIRONMENT, code, query, eu_token)
+                      for code, query in queries.items()
+                  ] + [
+                      executor.submit(execute_task, NA_ENVIRONMENT, code, query, na_token)
+                      for code, query in queries.items()
+                  ]
+
+        # Fetch results as tasks complete
+        for future in futures:
+            code, environment, result = future.result()
+            results[code][environment] = result
 
     return results
+
 
 
 
