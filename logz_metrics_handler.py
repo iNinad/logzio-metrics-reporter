@@ -78,8 +78,8 @@ def load_query_config(config_file_path: str) -> Dict[str, Any]:
 
 
 
-def replace_placeholders(query: Dict[str, Any], start_time: str, end_time: str, namespace: str,
-                         tenant: str) -> Dict[str, Any]:
+def replace_placeholders(query: Dict[str, Any], start_time: str, end_time: str, namespace: str = None,
+                         tenant: str = None, response_code: str = None) -> Dict[str, Any]:
     """
     Replace placeholders in the query template with actual values.
 
@@ -89,6 +89,7 @@ def replace_placeholders(query: Dict[str, Any], start_time: str, end_time: str, 
         end_time (str): Query end time (ISO8601 format).
         namespace (str): Namespace to include in the query.
         tenant (str): tenant for the query.
+        response_code (str): status code for the HTTP request.
 
     Returns:
         Dict[str, Any]: The updated query with placeholders replaced.
@@ -96,8 +97,12 @@ def replace_placeholders(query: Dict[str, Any], start_time: str, end_time: str, 
     query_str = json.dumps(query)  # Convert query dictionary to a string
     updated_query_str = query_str.replace("PLACEHOLDER_START_TIME", start_time)
     updated_query_str = updated_query_str.replace("PLACEHOLDER_END_TIME", end_time)
-    updated_query_str = updated_query_str.replace("PLACEHOLDER_NAMESPACE", f"{namespace}")
-    updated_query_str = updated_query_str.replace("PLACEHOLDER_TENANT", tenant)
+    if namespace:
+        updated_query_str = updated_query_str.replace("PLACEHOLDER_NAMESPACE", f"{namespace}")
+    if tenant:
+        updated_query_str = updated_query_str.replace("PLACEHOLDER_TENANT", tenant)
+    if response_code:
+        updated_query_str = updated_query_str.replace("PLACEHOLDER_RESPONSE_CODE", response_code)
     return json.loads(updated_query_str)  # Convert string back to a dictionary
 
 
@@ -167,11 +172,11 @@ def build_oca_queries(namespace_lists: Dict[str, List[str]], start_time: str, en
         environment: {
             tenant: [
                 # Total requests query
-                replace_placeholders(query_config["oca_queries"]["total_requests"], start_time, end_time, namespace_name,
-                                     tenant),
+                replace_placeholders(query_config["oca_queries"]["total_requests"], start_time, end_time, namespace=namespace_name,
+                                     tenant=tenant),
                 # Failed requests query
-                replace_placeholders(query_config["oca_queries"]["failed_requests"], start_time, end_time, namespace_name,
-                                     tenant)
+                replace_placeholders(query_config["oca_queries"]["failed_requests"], start_time, end_time, namespace=namespace_name,
+                                     tenant=tenant)
             ]
             for tenant in namespaces
         }
@@ -179,42 +184,62 @@ def build_oca_queries(namespace_lists: Dict[str, List[str]], start_time: str, en
     }
 
 
-def build_request_distribution_queries(platform_prefix: str, date: str, start_time: str, end_time: str) -> Dict[
+def build_request_distribution_queries(platform_prefix: str, start_time: str, end_time: str) -> Dict[
     str, Any]:
     """
-    Build queries for request distribution with specific time ranges and response codes.
+    Build queries for request distribution with specific time ranges and response codes
+    using external query configurations.
 
     Args:
         platform_prefix (str): Platform ("prd" or "stg").
-        date (str): Date in YYYY-MM-DD format.
         start_time (str): Start time in HH:mm:ssZ format.
         end_time (str): End time in HH:mm:ssZ format.
 
     Returns:
         Dict[str, Any]: Queries for response codes and total requests.
     """
+    # Load the query configuration from an external JSON file
+    config_file_path = os.path.join(os.path.dirname(__file__), "queries_config.json")
+    query_config = load_query_config(config_file_path)
+
+    # Namespace name (formatted from platform prefix)
     namespace_name = f"tid-{platform_prefix}-ws"
+
+    # Prepare queries for each response code
     queries = {}
-    for code in RESPONSE_CODES + ["total"]:
-        query = {
+    for response_code in RESPONSE_CODES + ["total"]:
+        base_query = query_config["request_distribution_query"]  # Load the base query template
+        # Get the additional logic for response code conditions
+        if response_code == "total":
+            additional_condition = \
+                query_config["request_distribution_query"]["additional_logic"]["response_code_condition"]["total"]
+        else:
+            additional_condition = \
+                query_config["request_distribution_query"]["additional_logic"]["response_code_condition"]["specific"]
+
+        # Safely extract "bool" and "must" from the base query
+        base_bool = base_query["query"].get("bool", {})
+        base_must = base_bool.get("must", [])
+
+        # Combine the "must" condition with the additional logic
+        base_query_with_condition = {
             "query": {
                 "bool": {
-                    "must": [
-                        {"range": {"@timestamp": {"gte": f"{date}T{start_time}", "lte": f"{date}T{end_time}"}}},
-                        {"term": {"kubernetes.container.name": "api"}},
-                        {"term": {"kubernetes.namespace_name": namespace_name}}
-                    ]
+                    "must": base_must + [additional_condition]  # Merge "must" conditions
                 }
             }
         }
-        if code != "total":
-            query["query"]["bool"]["must"].append({"term": {"upstream_status": code}})
-        else:
-            query["query"]["bool"]["must"].append({"exists": {"field": "upstream_status"}})
 
-        queries[code] = query
+        queries[response_code] = replace_placeholders(
+                base_query_with_condition,
+                start_time=start_time,
+                end_time=end_time,
+                namespace=namespace_name,
+                response_code=response_code
+            )
 
     return queries
+
 
 
 def query_osra_errors(
@@ -242,7 +267,7 @@ def query_osra_errors(
     query_config = load_query_config(config_file_path)
 
     # Replace placeholders in the query
-    osra_error_query = replace_placeholders(query_config["osra_error_query"], start_time, end_time, "", "")
+    osra_error_query = replace_placeholders(query_config["osra_error_query"], start_time, end_time, "")
 
     # Use the execute_query function to get hits and error details
     total_errors, error_details = execute_query(
@@ -258,7 +283,6 @@ def query_osra_errors(
 
 def fetch_request_distribution(
         platform_prefix: str,
-        date: str,
         start_time: str,
         end_time: str,
         eu_token: str,
@@ -269,7 +293,6 @@ def fetch_request_distribution(
 
     Args:
         platform_prefix (str): Platform prefix for the namespace (e.g., "prd" or "stg").
-        date (str): Date in YYYY-MM-DD format.
         start_time (str): Start time in HH:mm:ssZ format.
         end_time (str): End time in HH:mm:ssZ format.
         eu_token (str): API token for EU cluster.
@@ -278,7 +301,7 @@ def fetch_request_distribution(
     Returns:
         Dict[str, Dict[str, int]]: Results grouped by response code, with counts for both EU and NA environments.
     """
-    queries = build_request_distribution_queries(platform_prefix, date, start_time, end_time)
+    queries = build_request_distribution_queries(platform_prefix, start_time, end_time)
 
     # Initialize results in the desired format
     results = {code: {EU_ENVIRONMENT: 0, NA_ENVIRONMENT: 0} for code in RESPONSE_CODES + ["total"]}
@@ -302,7 +325,7 @@ def generate_request_distribution_table(
         end_time: str,
         eu_token: str,
         na_token: str,
-        range_weeks: int = 2
+        range_weeks: int = 1
 ) -> str:
     """
     Optimized: Generate the request distribution table with colspan header format for EU and NA data.
@@ -340,9 +363,8 @@ def generate_request_distribution_table(
         # Fetch data for this date
         results = fetch_request_distribution(
             platform_prefix,
-            query_date,
-            start_time,
-            end_time,
+            f"{query_date}T{start_time}",
+            f"{query_date}T{end_time}",
             eu_token,
             na_token,
         )
@@ -647,13 +669,15 @@ def create_confluence_page(
 
         if existing_page:
             page_id = existing_page['id']
-            confluence.update_page(page_id=page_id, title=page_title, body=content)
-            print("[INFO] Confluence page updated successfully!")
+            response = confluence.update_page(page_id=page_id, title=page_title, body=content)
+            page_url = response.get('_links', {}).get('base') + response.get('_links', {}).get('webui', '')
+            print(f"[INFO] Confluence page updated successfully! URL: {page_url}")
         else:
-            confluence.create_page(space=space_key, title=page_title, body=content)
-            print("[INFO] Confluence page created successfully!")
+            response = confluence.create_page(space=space_key, title=page_title, body=content)
+            page_url = response.get('_links', {}).get('base') + response.get('_links', {}).get('webui', '')
+            print(f"[INFO] Confluence page created successfully! URL: {page_url}")
     except RequestException as e:
-        print(f"[ERROR] Confluence connection issue: {e}")
+            print(f"[ERROR] Confluence connection issue: {e}")
 
 
 def generate_date_ranges(base_date: str, date_offset_range: int, start_time: str, end_time: str) -> List[Tuple[str, str, str]]:

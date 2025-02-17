@@ -1,0 +1,74 @@
+{
+  "oca_queries": {
+    "total_requests": {
+      "query": {
+        "bool": {
+          "must": [
+            { "range": { "@timestamp": { "gte": "PLACEHOLDER_START_TIME", "lte": "PLACEHOLDER_END_TIME" } } },
+            {
+              "term": {
+                "kubernetes.namespace_name": "PLACEHOLDER_NAMESPACE"
+              }
+            },
+            { "exists": { "field": "upstream_status" } },
+            { "term": { "tenant": "PLACEHOLDER_TENANT" } }
+          ]
+        }
+      },
+      "size": 0
+    },
+    "failed_requests": {
+      "query": {
+        "bool": {
+          "must": [
+            { "range": { "@timestamp": { "gte": "PLACEHOLDER_START_TIME", "lte": "PLACEHOLDER_END_TIME" } } },
+            {
+              "term": {
+                "kubernetes.namespace_name": "PLACEHOLDER_NAMESPACE"
+              }
+            },
+            { "exists": { "field": "upstream_status" } },
+            { "term": { "tenant": "PLACEHOLDER_TENANT" } },
+            { "range": { "upstream_status": { "gte": 500, "lte": 599 } } }
+          ]
+        }
+      },
+      "size": 0
+    }
+  },
+  "osra_error_query": {
+    "query": {
+      "bool": {
+        "must": [
+          { "range": { "@timestamp": { "gte": "PLACEHOLDER_START_TIME", "lte": "PLACEHOLDER_END_TIME" } } },
+          {
+            "query_string": {
+              "query": "NOT \"Unable to deserialize the fingerprint JSON into ADDENDUM_XML\" AND NOT \"Response status code does not indicate success: 404\" AND NOT \"Response status code does not indicate success: 502\""
+            }
+          },
+          { "term": { "kubernetes.container.name": "osra-datacollector" } },
+          { "term": { "ospn_solution": "ra" } },
+          { "term": { "level": "ERROR" } }
+        ]
+      }
+    },
+    "_source": { "includes": ["message", "tenant"] }
+  },
+  "request_distribution_query": {
+    "query": {
+      "bool": {
+        "must": [
+          { "range": { "@timestamp": { "gte": "PLACEHOLDER_START_TIME", "lte": "PLACEHOLDER_END_TIME" } } },
+          { "term": { "kubernetes.container.name": "api" } },
+          { "term": { "kubernetes.namespace_name": "PLACEHOLDER_NAMESPACE" } }
+        ]
+      }
+    },
+    "additional_logic": {
+      "response_code_condition": {
+        "total": { "exists": { "field": "upstream_status" } },
+        "specific": { "term": { "upstream_status": "PLACEHOLDER_RESPONSE_CODE" } }
+      }
+    }
+  }
+}
