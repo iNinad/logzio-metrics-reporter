@@ -3,6 +3,7 @@
 ## Overview
 This repository contains:
 - A Python script (`logz_metrics_handler.py`) that queries logs from different environments (e.g., EU and NA) based on specified parameters, processes them, and generates results in CSV format or uploads them to Confluence.
+- The script supports concurrent query execution using `multiprocessing.Pool` and `ThreadPoolExecutor` for enhanced performance during parallel processing.
 - A Jenkins pipeline (`Jenkinsfile`) that automates script execution and handles environment setup.
 - A Dockerization option, including `docker-compose` support, to run the script in a containerized environment.
 - Dependencies listed in `requirements.txt`.
@@ -12,13 +13,15 @@ The output, including `output.csv`, is generated as an artifact for every pipeli
 ---
 
 ## Features
+
 1. **Log Query and Processing**:
    - The script queries logs from `Logz.io` based on runtime parameters (e.g., date, time range, namespaces).
    - Tokens can be securely provided via arguments or environment variables set in a `.env` file.
+   - Parallel execution using `multiprocessing.Pool` for improved performance.
 
 2. **Output and Reporting**:
    - Generates a CSV file (`output.csv`) containing processed results.
-   - Optionally creates a Confluence page for the metrics.
+   - Optionally creates a Confluence page for the metrics using the `atlassian-python-api` library.
 
 3. **Docker Support**:
    - Run the script easily in a containerized environment using either Docker or `docker-compose`, eliminating the need for manual environment setup.
@@ -34,15 +37,15 @@ The output, including `output.csv`, is generated as an artifact for every pipeli
 ## Prerequisites
 
 ### To Run Locally:
-- **Python 3.10+**
-- `pip` for managing dependencies.
+- **Python 3.10+** for executing the script.
+- `pip` for managing dependencies listed in `requirements.txt`.
 
 ### On Docker or Docker Compose:
 - **Docker** and **Docker Compose** installed.
 - A `.env` file in the repository root containing the required tokens.
 
 ### On Jenkins:
-1. Add the following credentials:
+1. Add the following credentials in Jenkins:
    - **Logzio_NA01_Token_SearchAPI**: Token for accessing NA logs.
    - **Logzio_EU01_Token_SearchAPI**: Token for accessing EU logs.
    - **CONFLUENCE_IMPORTER**: Credentials for Confluence.
@@ -142,7 +145,7 @@ docker run --rm logz-metrics-handler \
 
    > **NOTE**: Do not commit the `.env` file, as it contains sensitive credentials.
 
-2. You can use the provided `.env.example` file as a template for creating your `.env`.
+2. Use the provided `.env.example` file as a template for creating your `.env`.
 
 #### Run the Application with Docker Compose:
 ```bash
@@ -161,7 +164,7 @@ docker compose down
 ```
 
 #### Customizing Docker Compose Command:
-You can modify parameters in `docker-compose.yml` under the `command` field if needed, or pass arguments via environment variables.
+Modify parameters in `docker-compose.yml` under the `command` field if needed, or pass arguments via environment variables.
 
 ---
 
@@ -191,19 +194,19 @@ The pipeline will automatically save the results (`output.csv`) as build artifac
 
 ## Common Errors and Troubleshooting
 
-#### 1. Script Errors:
-- **Error**: `FileNotFoundError: customers.yml not found`
-  - Ensure the correct path to the `customers.yml` file is specified via `--customers_file`.
+### 1. Script Errors:
+- **Missing or Incorrect Configuration Files:**
+  - If you encounter `FileNotFoundError: customers.yml not found`, ensure the correct path to the `customers.yml` file is specified via `--customers_file`.
 
-- **Error**: `Invalid API Token`
-  - Check that the tokens provided for `EU` or `NA` are correct and have the required access.
+- **Invalid API Token:**
+  - Verify that the provided Logz.io `EU` or `NA` tokens are correct and have the required access.
 
-#### 2. Docker Errors:
-- **Error**: `Environment variable not defined`
-  - Ensure all required keys are present in the `.env` file.
+### 2. Docker Errors:
+- **Environment Variables Not Defined:**
+  - Ensure all required keys are present in the `.env` file to avoid errors when running with Docker Compose.
 
-#### 3. Jenkins Pipeline Failures:
-- **Error**: `Checkout failed for oas-deployment`
-  - Verify the Jenkins job has access to the required Git repository.
+### 3. Jenkins Pipeline Failures:
+- **Git Checkout Errors:**
+  - Ensure Jenkins has access permissions for the required repositories.
 
 ---
