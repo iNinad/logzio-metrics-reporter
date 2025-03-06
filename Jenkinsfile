@@ -31,8 +31,13 @@ pipeline {
         )
         string(
             name: 'DATE_OFFSET_RANGE',
-            defaultValue: '8',
+            defaultValue: '7',
             description: 'Number of days before and after the base date'
+        )
+        string(
+            name: 'CONFLUENCE_SPACE_KEY',
+            defaultValue: 'TeamSystemEngineering',
+            description: 'Enter the Confluence Space Key'
         )
         string(
             name: 'CONFLUENCE_PAGE',
@@ -49,7 +54,7 @@ pipeline {
         stage('Input Validation') {
             steps {
                 echo '[INFO] Validating input parameters...'
-                sh '''
+                sh '''#!/bin/bash
                 if ! [[ "$DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
                     echo "[ERROR] Invalid date format. Expected YYYY-MM-DD."
                     exit 1
@@ -62,7 +67,7 @@ pipeline {
                     echo "[ERROR] Invalid end time format. Expected HH:mm:ssZ."
                     exit 1
                 fi
-                if ! [[ "DATE_OFFSET_RANGE" =~ ^[0-9]+$ ]]; then
+                if ! [[ "$DATE_OFFSET_RANGE" =~ ^[0-9]+$ ]]; then
                     echo "[ERROR] Invalid time range. Expected a positive number."
                     exit 1
                 fi
@@ -73,26 +78,26 @@ pipeline {
             parallel {
                 stage('Checkout Repositories') {
                     steps {
-                        echo '[INFO] Checking out repository containing script.py...'
+                        echo '[INFO] Checking out repository containing logz_metrics_handler.py...'
                         checkout scm
-
-                        // Optional sparse checkout for oas-deployment repository
-                        when {
-                            expression { params.CHECKOUT_OAS_DEPLOYMENT }
-                        }
-                        dir('oas-deployment') {
-                            steps {
-                                echo '[INFO] Checking out oas-deployment repository for customers.yml...'
-                                checkout([$class: 'GitSCM',
-                                    branches: [[name: '*/eu01-prd']],
-                                    extensions: [
-                                        [$class: 'SparseCheckoutPaths', paths: ['customers.yml']]
-                                    ],
-                                    userRemoteConfigs: [[
-                                        url: 'git@git.cias.one:tid/oas-deployment',
-                                        credentialsId: 'ciasGitCredentialIdentifier'
-                                    ]]
-                                ])
+                        script {
+                            // Optional sparse checkout for oas-deployment repository
+                            if (params.CHECKOUT_OAS_DEPLOYMENT) {
+                                dir('oas-deployment') {
+                                    echo '[INFO] Checking out oas-deployment repository for customers.yml...'
+                                    checkout([$class: 'GitSCM',
+                                        branches: [[name: '*/eu01-prd']],
+                                        extensions: [
+                                            [$class: 'SparseCheckoutPaths', paths: ['customers.yml']]
+                                        ],
+                                        userRemoteConfigs: [[
+                                            url: 'git@git.cias.one:tid/oas-deployment',
+                                            credentialsId: 'ciasGitCredentialIdentifier'
+                                        ]]
+                                    ])
+                                }
+                            } else {
+                                echo '[INFO] Skipping checkout of oas-deployment repository'
                             }
                         }
                     }
@@ -127,9 +132,11 @@ pipeline {
                             --eu_token "$EU_TOKEN" \
                             --na_token "$NA_TOKEN" \
                             --customers_file "${customersFile}" \
+                            --space_key "${CONFLUENCE_SPACE_KEY}" \
                             --page_title "${CONFLUENCE_PAGE}" \
                             --confluence_username "${confluenceUser}" \
-                            --confluence_password "${confluencePassword}"
+                            --confluence_password "${confluencePassword}" \
+                            --invoker_info "${env.BUILD_URL}"
                         """
                     }
                 }
