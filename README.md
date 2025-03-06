@@ -15,22 +15,22 @@ The output, including `output.csv`, is generated as an artifact for every pipeli
 ## Features
 
 1. **Log Query and Processing**:
-   - The script queries logs from `Logz.io` based on runtime parameters (e.g., date, time range, namespaces).
-   - Tokens can be securely provided via arguments or environment variables set in a `.env` file.
-   - Parallel execution using `multiprocessing.Pool` for improved performance.
+    - The script queries logs from `Logz.io` based on runtime parameters (e.g., date, time range, namespaces).
+    - Tokens can be securely provided via arguments or environment variables set in a `.env` file.
+    - Parallel execution using `multiprocessing.Pool` for improved performance.
 
 2. **Output and Reporting**:
-   - Generates a CSV file (`output.csv`) containing processed results.
-   - Optionally creates a Confluence page for the metrics using the `atlassian-python-api` library.
+    - Generates a CSV file (`output.csv`) containing processed results.
+    - Optionally creates a Confluence page for the metrics using the `atlassian-python-api` library.
 
 3. **Docker Support**:
-   - Run the script easily in a containerized environment using either Docker or `docker-compose`, eliminating the need for manual environment setup.
+    - Run the script easily in a containerized environment using either Docker or `docker-compose`, eliminating the need for manual environment setup.
 
 4. **Pipeline Automation**:
-   - The `Jenkinsfile` automates repository checkout, script execution, output generation, and artifact uploading.
+    - The `Jenkinsfile` automates repository checkout, script execution, output generation, and artifact uploading.
 
 5. **Sparse Checkout**:
-   - Fetches only the necessary `customers.yml` file from an additional Git repository (`oas-deployment`) when required.
+    - Fetches only the necessary `customers.yml` file from an additional Git repository (`oas-deployment`) when required.
 
 ---
 
@@ -46,9 +46,9 @@ The output, including `output.csv`, is generated as an artifact for every pipeli
 
 ### On Jenkins:
 1. Add the following credentials in Jenkins:
-   - **Logzio_NA01_Token_SearchAPI**: Token for accessing NA logs.
-   - **Logzio_EU01_Token_SearchAPI**: Token for accessing EU logs.
-   - **CONFLUENCE_IMPORTER**: Credentials for Confluence.
+    - **Logzio_NA01_Token_SearchAPI**: Token for accessing NA logs.
+    - **Logzio_EU01_Token_SearchAPI**: Token for accessing EU logs.
+    - **CONFLUENCE_IMPORTER**: Credentials for Confluence.
 
 2. Ensure Jenkins has Git configured to access this repository and optionally the `oas-deployment` repository.
 
@@ -60,7 +60,8 @@ The output, including `output.csv`, is generated as an artifact for every pipeli
 .
 ├── Jenkinsfile                 # Jenkins pipeline definition
 ├── logz_metrics_handler.py     # Python script for querying logs
-├── customers.yaml              # Openshift namespaces information
+├── customers.yml               # Openshift namespaces information
+├── queries_config.json         # Logz.io queries configuration
 ├── requirements.txt            # Python dependencies
 ├── Dockerfile                  # Docker configuration
 ├── docker-compose.yml          # Docker Compose setup
@@ -123,10 +124,11 @@ docker run --rm logz-metrics-handler \
     --date_offset_range 14 \
     --eu_token "<EU_TOKEN>" \
     --na_token "<NA_TOKEN>" \
-    --customers_file "/app/customers.yaml" \
+    --customers_file "/app/customers.yml" \
     --page_title "Logz.io Metrics" \
     --confluence_username "<CONFLUENCE_USERNAME>" \
-    --confluence_password "<CONFLUENCE_PASSWORD>"
+    --confluence_password "<CONFLUENCE_PASSWORD>" \
+    --invoker_info "docker container"
 ```
 
 ---
@@ -135,7 +137,7 @@ docker run --rm logz-metrics-handler \
 
 #### Set Up the Environment Variables:
 1. Create a `.env` file in the repository root to define environment-specific variables required by Docker Compose.
-   
+
    Example `.env` file:
    ```properties
    EU_API_TOKEN=your-eu-logz-token
@@ -179,14 +181,15 @@ The `Jenkinsfile` automates:
 #### Trigger the Pipeline:
 Provide the following parameters during pipeline execution:
 
-| Parameter                 | Description                                                               |
-|---------------------------|---------------------------------------------------------------------------|
-| `PLATFORM`                | Target platform for queries (`prd` or `stg`).                             |
-| `DATE`                    | Base date (`YYYY-MM-DD`).                                                 |
-| `START_TIME`, `END_TIME`  | Start and End time in the format `HH:mm:ssZ` (UTC).                       |
-| `DATE_OFFSET_RANGE`       | Time range for date-based processing.                                     |
-| `CONFLUENCE_PAGE`         | Title of the page to create on Confluence.                                |
-| `CHECKOUT_OAS_DEPLOYMENT` | Boolean flag to fetch the `customers.yml` file from `oas-deployment`.     |
+| Parameter                 | Description                                                           |
+|---------------------------|-----------------------------------------------------------------------|
+| `PLATFORM`                | Target platform for queries (`prd` or `stg`).                         |
+| `DATE`                    | Base date (`YYYY-MM-DD`).                                             |
+| `START_TIME`, `END_TIME`  | Start and End time in the format `HH:mm:ssZ` (UTC).                   |
+| `DATE_OFFSET_RANGE`       | Time range for date-based processing.                                 |
+| `CONFLUENCE_SPACE_KEY`    | Key of the Confluence Space.                                          |
+| `CONFLUENCE_PAGE`         | Title of the page to create on Confluence.                            |
+| `CHECKOUT_OAS_DEPLOYMENT` | Boolean flag to fetch the `customers.yml` file from `oas-deployment`. |
 
 The pipeline will automatically save the results (`output.csv`) as build artifacts.
 
@@ -196,17 +199,17 @@ The pipeline will automatically save the results (`output.csv`) as build artifac
 
 ### 1. Script Errors:
 - **Missing or Incorrect Configuration Files:**
-  - If you encounter `FileNotFoundError: customers.yml not found`, ensure the correct path to the `customers.yml` file is specified via `--customers_file`.
+    - If you encounter `FileNotFoundError: customers.yml not found`, ensure the correct path to the `customers.yml` file is specified via `--customers_file`.
 
 - **Invalid API Token:**
-  - Verify that the provided Logz.io `EU` or `NA` tokens are correct and have the required access.
+    - Verify that the provided Logz.io `EU` or `NA` tokens are correct and have the required access.
 
 ### 2. Docker Errors:
 - **Environment Variables Not Defined:**
-  - Ensure all required keys are present in the `.env` file to avoid errors when running with Docker Compose.
+    - Ensure all required keys are present in the `.env` file to avoid errors when running with Docker Compose.
 
 ### 3. Jenkins Pipeline Failures:
 - **Git Checkout Errors:**
-  - Ensure Jenkins has access permissions for the required repositories.
+    - Ensure Jenkins has access permissions for the required repositories.
 
 ---
