@@ -69,7 +69,8 @@
         "total": { "exists": { "field": "upstream_status" } },
         "specific": { "term": { "upstream_status": "PLACEHOLDER_RESPONSE_CODE" } }
       }
-    }
+    },
+    "response_codes": ["200", "201", "202", "204", "400", "404", "405", "409", "500"]
   },
   "soap_requests_query": {
     "query": {
@@ -86,6 +87,7 @@
         "total": { "exists": { "field": "nginx.access.response_code" } },
         "specific": { "term": { "nginx.access.response_code": "PLACEHOLDER_RESPONSE_CODE" } }
       }
-    }
+    },
+    "response_codes": ["200", "500"]
   }
 }
