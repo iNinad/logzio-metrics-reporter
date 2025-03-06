@@ -23,12 +23,10 @@ BASE_API_URL_NA = "https://api.logz.io/v1/search"
 NAMESPACE_PREFIX = 'tid-{platform_prefix}-'
 NAMESPACE_SUFFIX = '-oas'
 DEFAULT_CSV_FILENAME = "output.csv"
-RESPONSE_CODES = ["200", "201", "202", "204", "400", "404", "405", "409", "500"]
 
 # Retry configuration for HTTP requests
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2
-
 
 # ==========================
 # Utility Functions
@@ -64,18 +62,33 @@ def get_url(environment: str) -> str:
     return BASE_API_URL_NA if environment == NA_ENVIRONMENT else BASE_API_URL_EU
 
 
-def load_query_config(config_file_path: str) -> Dict[str, Any]:
+def load_query_config(config_file: str) -> Dict[str, Any]:
     """
     Load queries from an external JSON configuration file.
 
     Args:
-        config_file_path (str): Path to the configuration JSON file.
+        config_file (str): Path to the configuration JSON file.
 
     Returns:
         Dict[str, Any]: The loaded query configurations.
     """
-    with open(config_file_path, "r") as file:
-        return json.load(file)
+    try:
+        # Load query configuration from a JSON file
+        config_file_path = os.path.join(os.path.dirname(__file__), config_file)
+
+        if not os.path.exists(config_file_path):
+            raise FileNotFoundError(f"Configuration file not found at {config_file_path}")
+
+        with open(config_file_path, "r") as file:
+            query_config = json.load(file)
+
+    except FileNotFoundError as fnf_error:
+        raise FileNotFoundError(f"Error loading configuration file: {fnf_error}")
+    except json.JSONDecodeError as jde_error:
+        raise ValueError(f"Configuration file is not a valid JSON format: {jde_error}")
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error while loading query configuration: {str(e)}")
+    return query_config
 
 
 def replace_placeholders(query: Dict[str, Any], start_time: str, end_time: str, namespace: str = None,
@@ -107,6 +120,31 @@ def replace_placeholders(query: Dict[str, Any], start_time: str, end_time: str, 
     if platform:
         updated_query_str = updated_query_str.replace("PLACEHOLDER_PLATFORM", platform)
     return json.loads(updated_query_str)  # Convert string back to a dictionary
+
+
+def get_response_codes(section: str) -> List[str]:
+    """
+    Returns response codes for the given section in the JSON configuration file.
+
+    Args:
+        section (str): section from the configuration JSON file.
+
+    Returns:
+        List[str]: List of response codes.
+    """
+    # Extract response codes specific to the section
+    section_config = query_config.get(section, {})
+    response_codes = section_config.get("response_codes", [])
+    if not response_codes:
+        raise KeyError(f"Missing 'response_codes' in section: {section}")
+    return response_codes
+
+
+# ==========================
+# Query config contents
+# ==========================
+
+query_config = load_query_config("queries_config.json")
 
 
 # ==========================
@@ -167,21 +205,6 @@ def build_oca_queries(namespace_lists: Dict[str, List[str]], start_time: str, en
         KeyError: If required keys are missing in the JSON configuration.
         ValueError: If the query construction has mismatches or failures.
     """
-    try:
-        # Load query configuration from a JSON file
-        config_file_path = os.path.join(os.path.dirname(__file__), "queries_config.json")
-
-        if not os.path.exists(config_file_path):
-            raise FileNotFoundError(f"Configuration file not found at {config_file_path}")
-
-        query_config = load_query_config(config_file_path)
-
-    except FileNotFoundError as fnf_error:
-        raise FileNotFoundError(f"Error loading configuration file: {fnf_error}")
-    except json.JSONDecodeError as jde_error:
-        raise ValueError(f"Configuration file is not a valid JSON format: {jde_error}")
-    except Exception as e:
-        raise RuntimeError(f"Unexpected error while loading query configuration: {str(e)}")
 
     try:
         # Namespace prefix (used for formatting the namespace field)
@@ -260,29 +283,16 @@ def build_request_queries(platform_prefix: str, start_time: str, end_time: str, 
         KeyError: If required keys are missing in the JSON configuration.
         ValueError: If a query cannot be successfully built.
     """
-    try:
-        # Load the query configuration from an external JSON file
-        config_file_path = os.path.join(os.path.dirname(__file__), "queries_config.json")
-
-        if not os.path.exists(config_file_path):
-            raise FileNotFoundError(f"Configuration file not found at {config_file_path}")
-
-        query_config = load_query_config(config_file_path)
-
-    except FileNotFoundError as fnf_error:
-        raise FileNotFoundError(f"Error loading configuration file: {fnf_error}")
-    except json.JSONDecodeError as jde_error:
-        raise ValueError(f"Configuration file is not a valid JSON format: {jde_error}")
-    except Exception as e:
-        raise RuntimeError(f"Unexpected error occurred while loading query configuration: {str(e)}")
 
     try:
         # Namespace name (formatted from platform prefix)
         namespace_name = f"tid-{platform_prefix}-ws"
 
+        response_codes = get_response_codes(section)
+
         # Prepare queries for each response code
         queries = {}
-        for response_code in RESPONSE_CODES + ["total"]:
+        for response_code in response_codes + ["total"]:
             base_query = query_config[section]  # Load the base query template
 
             # Get the additional logic for response code conditions
@@ -361,22 +371,6 @@ def query_osra_errors(
         RuntimeError: If the query execution fails.
     """
     try:
-        # Load query configuration from a JSON file
-        config_file_path = os.path.join(os.path.dirname(__file__), "queries_config.json")
-
-        if not os.path.exists(config_file_path):
-            raise FileNotFoundError(f"Configuration file not found at {config_file_path}")
-
-        query_config = load_query_config(config_file_path)
-
-    except FileNotFoundError as fnf_error:
-        raise FileNotFoundError(f"Error loading configuration file: {fnf_error}")
-    except json.JSONDecodeError as jde_error:
-        raise ValueError(f"Configuration file is not a valid JSON format: {jde_error}")
-    except Exception as e:
-        raise RuntimeError(f"Unexpected error while loading query configuration: {str(e)}")
-
-    try:
         # Validate the existence of "osra_error_query" in the query configuration
         if "osra_error_query" not in query_config:
             raise KeyError("Missing 'osra_error_query' in query configuration")
@@ -438,7 +432,8 @@ def fetch_request_distribution(
     queries = build_request_queries(platform_prefix, start_time, end_time, section)
 
     # Initialize results in the desired format
-    results = {code: {EU_ENVIRONMENT: 0, NA_ENVIRONMENT: 0} for code in RESPONSE_CODES + ["total"]}
+    response_codes = get_response_codes(section)
+    results = {code: {EU_ENVIRONMENT: 0, NA_ENVIRONMENT: 0} for code in response_codes + ["total"]}
 
     # Helper function to execute a query
     def execute_task(environment, code, query, token):
@@ -504,6 +499,7 @@ def generate_requests_distribution_table(
     time_headers = ""
     platform_headers = ""
     total_requests = {EU_ENVIRONMENT: [0] * len(dates), NA_ENVIRONMENT: [0] * len(dates)}  # Totals for EU and NA
+    response_codes = get_response_codes(section)
 
     # Fetch data and build headers in a single loop
     for index, query_date in enumerate(dates):
@@ -524,7 +520,7 @@ def generate_requests_distribution_table(
         platform_headers += f"<th>EU-{platform_prefix.upper()}</th><th>NA-{platform_prefix.upper()}</th>"
 
         # Update totals for EU and NA for use in the totals row
-        for code in RESPONSE_CODES:
+        for code in response_codes:
             total_requests[EU_ENVIRONMENT][index] += results.get(code, {}).get(EU_ENVIRONMENT, 0)
             total_requests[NA_ENVIRONMENT][index] += results.get(code, {}).get(NA_ENVIRONMENT, 0)
 
@@ -541,7 +537,7 @@ def generate_requests_distribution_table(
     html_table += f"<tr><th>Return code &darr; Platform &rarr;</th>{platform_headers}</tr>"
 
     # Add rows for response codes
-    for code in RESPONSE_CODES:
+    for code in response_codes:
         row = f"<tr><td>{code}</td>"
         for query_date in dates:
             results = all_results[query_date]
@@ -736,7 +732,8 @@ def create_confluence_page(
         osra_errors: Dict[str, Tuple[int, List[Dict[str, str]]]],
         all_requests_results: str,
         soap_requests_results: str,
-        date_ranges: List[Tuple[str, str, str]]
+        date_ranges: List[Tuple[str, str, str]],
+        invoker_info: str
 ) -> None:
     """
     Creates a Confluence page with detailed findings and metrics.
@@ -752,18 +749,19 @@ def create_confluence_page(
         all_requests_results (str): All requests table in HTML format.
         soap_requests_results (str): Soap requests table in HTML format.
         date_ranges (List[Tuple[str, str, str]]): List of tuples with date, start, and end times.
+        invoker_info (str): Invoker of the script.
     """
     try:
         confluence = Confluence(url=confluence_url, username=username, password=password)
 
-        content = f"<h1>{page_title}</h1>"
+        content = f"<h3>This report generated by <a href=\"{invoker_info}\">{invoker_info}</a>.</h3>"
 
         for date, environments in findings.items():
             start_time, end_time = next(
                 ((start, end) for d, start, end in date_ranges if d == date), (None, None)
             )
 
-            content += f"<h2>Results for {date} ({start_time.split('T')[1]} to {end_time.split('T')[1]})</h2>"
+            content += f"<h4>Results for {date} ({start_time.split('T')[1]} to {end_time.split('T')[1]})</h4>"
 
             # Side-by-side display for environments
             content += "<table style='width: 100%; table-layout: fixed;'><thead><tr>"
@@ -874,11 +872,12 @@ if __name__ == "__main__":
     parser.add_argument('--na_token', required=True, help="Logz.io NA API token.")
     parser.add_argument('--customers_file', required=True, help="Path to customers.yaml.")
     parser.add_argument('--csv_filename', default=DEFAULT_CSV_FILENAME, help="Output CSV filename.")
-    parser.add_argument('--confluence_url', required=True, help="Confluence base URL.")
+    parser.add_argument('--confluence_url', default="https://jira.onespan.com/confluence", help="Confluence base URL.")
     parser.add_argument('--confluence_username', required=True, help="Confluence username (or email).")
     parser.add_argument('--confluence_password', required=True, help="Confluence password.")
-    parser.add_argument('--space_key', required=True, help="Confluence space key.")
+    parser.add_argument('--space_key', default="TeamSystemEngineering", help="Confluence space key.")
     parser.add_argument('--page_title', required=True, help="Title for the Confluence page.")
+    parser.add_argument('--invoker_info', default="logz_metrics_handler.py", help="Invoker of this script (docker container, jenkins job etc).")
 
     # Parse arguments
     args = parser.parse_args()
@@ -891,7 +890,7 @@ if __name__ == "__main__":
         date_ranges = generate_date_ranges(args.date, args.date_offset_range, args.start_time, args.end_time)
 
         # Process all dates using multiprocessing
-        print("[INFO] Starting batch processing for OCA queries...")
+        print("[INFO] Starting processing for OCA queries...")
         all_date_results: Dict[str, Dict[str, Dict[str, Tuple[int, int]]]] = {}
 
         with Pool() as pool:
@@ -903,7 +902,7 @@ if __name__ == "__main__":
             for date, date_results in pool.starmap(process_date_task, tasks):
                 all_date_results[date] = date_results
 
-        print("[INFO] Batch processing completed for OCA queries.")
+        print("[INFO] Processing completed for OCA queries.")
 
         print("[INFO] Starting processing for OSRA queries...")
         osra_total_errors, osra_error_details = query_osra_errors(
@@ -946,7 +945,8 @@ if __name__ == "__main__":
             osra_errors=osra_results,
             all_requests_results=all_requests_table,
             soap_requests_results=soap_requests_table,
-            date_ranges=date_ranges
+            date_ranges=date_ranges,
+            invoker_info=args.invoker_info
         )
 
     except Exception as e:
