@@ -872,10 +872,10 @@ if __name__ == "__main__":
     parser.add_argument('--na_token', required=True, help="Logz.io NA API token.")
     parser.add_argument('--customers_file', required=True, help="Path to customers.yaml.")
     parser.add_argument('--csv_filename', default=DEFAULT_CSV_FILENAME, help="Output CSV filename.")
-    parser.add_argument('--confluence_url', default="https://jira.onespan.com/confluence", help="Confluence base URL.")
+    parser.add_argument('--confluence_url', default="http://192.168.0.107:8090/", help="Confluence base URL.")
     parser.add_argument('--confluence_username', required=True, help="Confluence username (or email).")
     parser.add_argument('--confluence_password', required=True, help="Confluence password.")
-    parser.add_argument('--space_key', default="TeamSystemEngineering", help="Confluence space key.")
+    parser.add_argument('--space_key', default="SE", help="Confluence space key.")
     parser.add_argument('--page_title', required=True, help="Title for the Confluence page.")
     parser.add_argument('--invoker_info', default="logz_metrics_handler.py", help="Invoker of this script (docker container, jenkins job etc).")
 
